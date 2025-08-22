@@ -1,39 +1,67 @@
 // netlify/functions/spm.js
-const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbxwbyRevKGFLGqtj47vAUP9Zxh7YrDfiYQarTpeygdBAXqRqccbaj7ehSPQRGipMylx/exec'; // <--- WSTAW swój /exec
+const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbwLhFgHxtQ7Dk0zQBG7YxQrcEb8uJHPw1od7SJ2_lP04QetOvQf0XKd5eBHkm-hmANRng/exec';
 
 exports.handler = async (event) => {
-  const cors = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type',
-    'Access-Control-Allow-Methods': 'POST, OPTIONS'
-  };
-
+  // CORS (opcjonalnie, ułatwia testy z przeglądarki)
   if (event.httpMethod === 'OPTIONS') {
-    return { statusCode: 204, headers: cors, body: '' };
+    return {
+      statusCode: 204,
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Headers': 'Content-Type',
+        'Access-Control-Allow-Methods': 'POST,OPTIONS'
+      },
+      body: ''
+    };
   }
+
   if (event.httpMethod !== 'POST') {
-    return { statusCode: 405, headers: { ...cors, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ok:false, error:'Method not allowed' }) };
+    return {
+      statusCode: 200,
+      headers: { 'Access-Control-Allow-Origin': '*' },
+      body: JSON.stringify({ ok:false, error:'Method not allowed' })
+    };
+  }
+
+  let payload = {};
+  try {
+    payload = JSON.parse(event.body || '{}');
+  } catch (e) {
+    return {
+      statusCode: 200,
+      headers: { 'Access-Control-Allow-Origin': '*' },
+      body: JSON.stringify({ ok:false, error:'Bad JSON' })
+    };
   }
 
   try {
-    const upstream = await fetch(WEB_APP_URL, {
+    const resp = await fetch(WEB_APP_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // Apps Script doPost(e)
-      body: event.body || '{}'
+      headers: { 'Content-Type':'application/json' },
+      body: JSON.stringify(payload)
     });
-
-    // spróbuj JSON; jeśli Google odda HTML — zawijamy w JSON, by front się nie wywalił
+    const text = await resp.text();
+    // przekaż dalej to, co zwrócił Apps Script
+    // (jeśli nie-JSON, zapakujemy w błąd)
     try {
-      const data = await upstream.json();
-      return { statusCode: 200, headers: { ...cors, 'Content-Type': 'application/json' }, body: JSON.stringify(data) };
+      JSON.parse(text);
+      return {
+        statusCode: 200,
+        headers: { 'Access-Control-Allow-Origin': '*' },
+        body: text
+      };
     } catch {
-      const raw = await upstream.text();
-      return { statusCode: 500, headers: { ...cors, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ok:false, error:'Apps Script returned non-JSON', upstreamStatus: upstream.status, raw: raw.slice(0,1200) }) };
+      return {
+        statusCode: 200,
+        headers: { 'Access-Control-Allow-Origin': '*' },
+        body: JSON.stringify({ ok:false, error:'Apps Script non-JSON', status:resp.status, body:text.slice(0,800) })
+      };
     }
   } catch (err) {
-    return { statusCode: 502, headers: { ...cors, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ok:false, error:'Fetch to Apps Script failed', detail: String(err) }) };
+    return {
+      statusCode: 200,
+      headers: { 'Access-Control-Allow-Origin': '*' },
+      body: JSON.stringify({ ok:false, error:String(err) })
+    };
   }
 };
