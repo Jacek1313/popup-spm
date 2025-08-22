@@ -3,13 +3,15 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>SPM — nagrywanie</title>
+  <title>SPM — nagrywanie (odsłuchowy podkład)</title>
   <style>
     :root { color-scheme: dark; }
     body { font-family: system-ui, Arial, sans-serif; margin: 24px; background:#111; color:#eee; }
-    h2 { margin-top: 2rem; }
+    h1,h2{ margin: 0 0 12px 0; }
+    h2{ margin-top: 22px; }
     .row { display: grid; grid-template-columns: 160px 1fr; gap: 12px; margin: 8px 0; align-items:center; }
-    input[type="text"], input[type="email"] { width: 100%; padding: 10px; border-radius:8px; border:1px solid #333; background:#181818; color:#eee; }
+    input[type="text"], input[type="email"], input[type="url"] { width: 100%; padding: 10px; border-radius:8px; border:1px solid #333; background:#181818; color:#eee; }
+    input[type="range"]{ width: 260px; }
     button{ padding:10px 14px; border-radius:8px; border:0; background:#2e7d32; color:#fff; cursor:pointer; }
     button.secondary{ background:#444; }
     button.warn{ background:#1565c0; }
@@ -17,7 +19,9 @@
     a.inline { display:inline-block; margin:6px 8px 0 0; }
     .card{ border:1px solid #272727; border-radius:12px; padding:16px; margin:18px 0; background:#141414; }
     #log{ background:#0c0c0c; border:1px solid #222; border-radius:12px; padding:12px; white-space:pre-wrap; min-height:120px; }
-    .note{ opacity:.8; font-size:.92rem; }
+    .note{ opacity:.85; font-size:.92rem; }
+    .val{ display:inline-block; min-width:70px; text-align:right; opacity:.9; }
+    .inline-controls{ display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
   </style>
 </head>
 <body>
@@ -32,10 +36,30 @@
     <div class="row"><label>Tytuł utworu</label><input id="tytul" type="text" /></div>
   </div>
 
-  <!-- 2) Nagrywanie -->
+  <!-- 2) Podkład (TYLKO ODSŁUCH) -->
+  <h2>Podkład (odsłuch)</h2>
+  <div class="card">
+    <div class="row">
+      <label>Plik z dysku</label>
+      <input id="trackFile" type="file" accept="audio/*" />
+    </div>
+    <div class="row">
+      <label>Albo link (MP3/WAV)</label>
+      <input id="trackUrl" type="url" placeholder="https://… (tylko odsłuch; CORS nie jest wymagany)" />
+    </div>
+    <div class="inline-controls" style="margin-top:8px">
+      <label for="trackVol">Głośność podkładu</label>
+      <input id="trackVol" type="range" min="0" max="1" step="0.01" value="0.7" />
+      <span id="trackVolVal" class="val">70%</span>
+    </div>
+    <audio id="backing" controls preload="auto" style="width:100%; margin-top:10px;"></audio>
+    <div class="note">Podkład gra w słuchawkach podczas nagrywania. <b>Nie zapisuje się</b> w pliku — nagrywa się tylko Twój mikrofon.</div>
+  </div>
+
+  <!-- 3) Nagrywanie -->
   <h2>Nagrywanie</h2>
   <div class="card">
-    <div>
+    <div class="inline-controls">
       <button id="btnStart">Start</button>
       <button id="btnStop" class="secondary" disabled>Stop</button>
       <button id="btnDownload" class="secondary" disabled>Pobierz</button>
@@ -43,10 +67,23 @@
     <div style="margin-top:12px">
       <audio id="player" controls></audio>
     </div>
-    <div class="note">Format: WebM/Opus (MediaRecorder). Pasek czasu działa w przeglądarce.</div>
+
+    <!-- 3b) Odsłuch po nagraniu z podkładem (opcjonalnie) -->
+    <div style="margin-top:14px" class="inline-controls">
+      <label><input id="playWithBacking" type="checkbox" /> Podkład przy odsłuchu</label>
+      <label for="offsetMs">Korekta przesunięcia</label>
+      <input id="offsetMs" type="range" min="-500" max="500" step="10" value="0" />
+      <span id="offsetVal" class="val">0 ms</span>
+
+      <label for="tempoPct">Korekta tempa</label>
+      <input id="tempoPct" type="range" min="-0.5" max="0.5" step="0.05" value="0" />
+      <span id="tempoVal" class="val">0.00%</span>
+    </div>
+
+    <div class="note">Jeśli po odsłuchu czujesz minimalny „rozjazd”, użyj suwaków: <b>przesunięcie</b> (ms) i <b>tempo</b> (±0,5%) — działa wyłącznie w odsłuchu.</div>
   </div>
 
-  <!-- 3) Wysyłka na Drive -->
+  <!-- 4) Wysyłka na Drive -->
   <h2>Wysyłka na Drive</h2>
   <div class="card">
     <button id="btnUpload" class="warn" disabled>Wyślij na Drive</button>
@@ -57,7 +94,7 @@
     </div>
   </div>
 
-  <!-- 4) Przekazanie do SPM -->
+  <!-- 5) Przekazanie do SPM -->
   <h2>Przekazanie do SPM</h2>
   <div class="card">
     <button id="sendToSpmBtn" disabled>Wyślij do SPM i zamknij</button>
@@ -71,35 +108,61 @@
 
 <script>
 /* ========= USTAWIENIA ========= */
-// Adres rodzica (Wix). Jeśli otwarte bez rodzica – bezpieczny fallback.
 const PARENT_ORIGIN = new URLSearchParams(location.search).get('parent') || '*';
-const FN_URL = '/.netlify/functions/spm'; // nasza funkcja Netlify (proxy do Apps Script)
+const FN_URL = '/.netlify/functions/spm';
 
 /* ========= ZMIENNE ========= */
 let mediaRecorder, chunks = [], recordedBlob = null, startedAt = 0, durationMs = 0;
 let fileName = '', mimeType = 'audio/webm';
-let lastToken = ''; // 'SPM:' + base64(meta)
+let lastToken = '';
+
+let micStream = null;
+const backing = document.getElementById('backing');
+
+/* Odsłuch po nagraniu: synchronizacja */
+let offsetMs = 0;          // przesunięcie podkładu względem nagrania (tylko w odsłuchu)
+let tempoPct = 0;          // zmiana tempa podkładu w odsłuchu (±0.5%)
+let resyncTimer = null;    // drobne autodosynchronizacje
 
 /* ========= POMOCNICZE ========= */
 const $ = (id)=>document.getElementById(id);
 function log(msg){ $('log').textContent += msg + '\n'; }
-function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
 function ts(){ return new Date().toISOString().replace(/[:.]/g,'-'); }
 function sanitize(s){ return (s||'').trim().replace(/\s+/g,'_').replace(/[^\w\-\.]+/g,''); }
-function blobToBase64(blob){
-  return new Promise((res,rej)=>{
-    const fr=new FileReader(); fr.onload=()=>res(fr.result.split(',')[1]); fr.onerror=rej; fr.readAsDataURL(blob);
-  });
-}
+function blobToBase64(blob){ return new Promise((res,rej)=>{ const fr=new FileReader(); fr.onload=()=>res(fr.result.split(',')[1]); fr.onerror=rej; fr.readAsDataURL(blob); }); }
+
+/* ========= PODKŁAD (tylko odsłuch) ========= */
+$('trackFile').addEventListener('change', e=>{
+  const f = e.target.files && e.target.files[0];
+  if(!f) return;
+  backing.src = URL.createObjectURL(f);
+  backing.load();
+  log('Podkład: plik z dysku ustawiony.');
+});
+$('trackUrl').addEventListener('change', e=>{
+  const url = (e.target.value||'').trim();
+  if(!url) return;
+  backing.src = url;
+  backing.load();
+  log('Podkład: link ustawiony.');
+});
+$('trackVol').addEventListener('input', e=>{
+  const v = parseFloat(e.target.value||'0.7');
+  backing.volume = v;
+  $('trackVolVal').textContent = Math.round(v*100) + '%';
+});
+backing.volume = parseFloat($('trackVol').value||'0.7');
+backing.preservesPitch = true; backing.mozPreservesPitch = true; backing.webkitPreservesPitch = true;
 
 /* ========= NAGRYWANIE ========= */
 $('btnStart').onclick = async ()=>{
   try{
-    const stream = await navigator.mediaDevices.getUserMedia({audio:true});
+    micStream = await navigator.mediaDevices.getUserMedia({audio:true});
     chunks = []; recordedBlob = null; durationMs = 0; startedAt = Date.now();
-    mediaRecorder = new MediaRecorder(stream, {mimeType});
+
+    mediaRecorder = new MediaRecorder(micStream, {mimeType});
     mediaRecorder.ondataavailable = e => { if(e.data && e.data.size) chunks.push(e.data); };
-    mediaRecorder.onstop = async ()=>{
+    mediaRecorder.onstop = ()=>{
       durationMs = Date.now() - startedAt;
       recordedBlob = new Blob(chunks, {type:mimeType});
       $('player').src = URL.createObjectURL(recordedBlob);
@@ -109,13 +172,22 @@ $('btnStart').onclick = async ()=>{
       $('btnUpload').disabled = false;
       $('sendToSpmBtn').disabled = true;
       $('copyTokenBtn').disabled = true;
-      log(`Nagrywanie OK. Czas ~ ${durationMs} ms; rozmiar ~ ${Math.round(recordedBlob.size/1024)} KB`);
+      log(`Nagranie gotowe. Czas ~ ${durationMs} ms; rozmiar ~ ${Math.round(recordedBlob.size/1024)} KB`);
     };
+
+    // uruchom podkład (jeśli ustawiony) i nagrywanie – tylko odsłuch
+    try{
+      if (backing.src) { backing.currentTime = 0; await backing.play(); }
+    }catch(e){ log('Uwaga: podkład nie wystartował ('+e.message+').'); }
     mediaRecorder.start();
+
     $('btnStart').disabled = true;
     $('btnStop').disabled = false;
-    log('Nagrywanie…');
-  }catch(e){ alert('Brak dostępu do mikrofonu.'); log('BŁĄD mikrofon: '+e); }
+    log('Nagrywanie… (podkład: tylko w słuchawkach)');
+  }catch(e){
+    alert('Brak dostępu do mikrofonu.');
+    log('BŁĄD mikrofon: '+e.message);
+  }
 };
 
 $('btnStop').onclick = ()=>{
@@ -124,6 +196,7 @@ $('btnStop').onclick = ()=>{
     mediaRecorder.stream.getTracks().forEach(t=>t.stop());
     $('btnStart').disabled = false;
     $('btnStop').disabled = true;
+    try{ backing.pause(); }catch(_){}
   }
 };
 
@@ -131,6 +204,67 @@ $('btnDownload').onclick = ()=>{
   if(!recordedBlob) return;
   const a=document.createElement('a'); a.href=URL.createObjectURL(recordedBlob); a.download=fileName; a.click();
 };
+
+/* ========= ODSŁUCH PO NAGRANIU (z podkładem, opcjonalnie) ========= */
+$('playWithBacking').addEventListener('change', ()=>{
+  // jeśli włączasz w trakcie odtwarzania – dopasuj
+  if ($('playWithBacking').checked && !$('player').paused && backing.src) {
+    resyncBackingToPlayer();
+    safePlayBacking();
+  } else {
+    backing.pause();
+  }
+});
+
+$('offsetMs').addEventListener('input', e=>{
+  offsetMs = parseInt(e.target.value,10)||0;
+  $('offsetVal').textContent = `${offsetMs} ms`;
+  if ($('playWithBacking').checked && !$('player').paused) resyncBackingToPlayer();
+});
+
+$('tempoPct').addEventListener('input', e=>{
+  tempoPct = parseFloat(e.target.value)||0;
+  $('tempoVal').textContent = `${tempoPct.toFixed(2)}%`;
+  backing.playbackRate = 1 + (tempoPct/100);
+});
+
+/* player steruje backingiem w odsłuchu */
+$('player').addEventListener('play', ()=>{
+  if ($('playWithBacking').checked && backing.src) {
+    resyncBackingToPlayer();
+    safePlayBacking();
+    startAutoResync();
+  }
+});
+$('player').addEventListener('pause', ()=>{
+  try{ backing.pause(); }catch(_){}
+  stopAutoResync();
+});
+$('player').addEventListener('seeking', ()=>{ if($('playWithBacking').checked) resyncBackingToPlayer(); });
+$('player').addEventListener('seeked',  ()=>{ if($('playWithBacking').checked) resyncBackingToPlayer(); });
+$('player').addEventListener('ratechange', ()=>{ if($('playWithBacking').checked) resyncBackingToPlayer(); });
+$('player').addEventListener('ended', ()=>{
+  try{ backing.pause(); }catch(_){}
+  stopAutoResync();
+});
+
+/* drobne autodosynchronizacje (skoki tylko gdy różnica > 120 ms) */
+function startAutoResync(){
+  stopAutoResync();
+  resyncTimer = setInterval(()=>{
+    if (!$('playWithBacking').checked) return;
+    const target = $('player').currentTime + offsetMs/1000;
+    const diff = Math.abs((backing.currentTime||0) - target);
+    if (diff > 0.12) backing.currentTime = Math.max(0, target);
+  }, 500);
+}
+function stopAutoResync(){ if(resyncTimer){ clearInterval(resyncTimer); resyncTimer=null; } }
+function resyncBackingToPlayer(){
+  const target = $('player').currentTime + offsetMs/1000;
+  backing.currentTime = Math.max(0, target);
+  backing.playbackRate = 1 + (tempoPct/100);
+}
+function safePlayBacking(){ backing.play().catch(()=>{}); }
 
 /* ========= UPLOAD NA DRIVE ========= */
 $('btnUpload').onclick = async ()=>{
@@ -143,17 +277,11 @@ $('btnUpload').onclick = async ()=>{
     const r = await fetch(FN_URL, {
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({
-        action:'upload',
-        fileBase64: base64,
-        mimeType,
-        fileName
-      })
+      body: JSON.stringify({ action:'upload', fileBase64: base64, mimeType, fileName })
     });
     const j = await r.json();
     if(!j.ok) throw new Error(j.error || 'Upload failed');
 
-    // pokaż linki
     $('aView').href = j.viewLink; $('aView').hidden = false;
     $('aDl').href   = j.downloadLink; $('aDl').hidden = false;
     $('fileIdSpan').textContent = j.fileId; $('fileIdLine').hidden = false;
