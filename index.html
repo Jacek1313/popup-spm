@@ -1,227 +1,212 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="pl">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>SPM — Nagrywanie (popup)</title>
+  <title>SPM — nagrywanie</title>
   <style>
-    :root{ --bg:#0f0f10; --fg:#fff; --muted:#bbb; --ui:#1b1b1f; --acc:#4caf50; }
-    html,body{ margin:0; background:var(--bg); color:var(--fg); font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif; }
-    .wrap{ max-width:900px; margin:0 auto; padding:16px; }
-    fieldset{ border:1px solid #2b2b2f; border-radius:12px; padding:12px; margin:12px 0; }
-    legend{ color:#ddd; padding:0 6px; }
-    label{ display:block; margin:6px 0 2px; font-size:14px; color:#ddd; }
-    input,button,textarea{ background:#121216; color:#fff; border:1px solid #2b2b2f; border-radius:10px; padding:10px; width:100%; }
-    button{ cursor:pointer; font-weight:600; }
-    button.primary{ background:var(--acc); border-color:var(--acc); color:#000; }
-    button.inline{ width:auto; display:inline-block; margin-right:8px; }
-    .row{ display:flex; gap:8px; flex-wrap:wrap; }
-    .row>*{ flex:1 1 260px; }
-    .log{ background:#0b0b0d; min-height:120px; white-space:pre-wrap; }
-    .hint{ color:var(--muted); font-size:12px; }
-    audio{ width:100%; margin-top:8px; background:#000; }
-    .links a{ color:#9ed8ff; text-decoration:none; }
-    .links a:hover{ text-decoration:underline; }
+    :root { color-scheme: dark; }
+    body { font-family: system-ui, Arial, sans-serif; margin: 24px; background:#111; color:#eee; }
+    h2 { margin-top: 2rem; }
+    .row { display: grid; grid-template-columns: 160px 1fr; gap: 12px; margin: 8px 0; align-items:center; }
+    input[type="text"], input[type="email"] { width: 100%; padding: 10px; border-radius:8px; border:1px solid #333; background:#181818; color:#eee; }
+    button{ padding:10px 14px; border-radius:8px; border:0; background:#2e7d32; color:#fff; cursor:pointer; }
+    button.secondary{ background:#444; }
+    button.warn{ background:#1565c0; }
+    button:disabled{ opacity:.6; cursor:not-allowed; }
+    a.inline { display:inline-block; margin:6px 8px 0 0; }
+    .card{ border:1px solid #272727; border-radius:12px; padding:16px; margin:18px 0; background:#141414; }
+    #log{ background:#0c0c0c; border:1px solid #222; border-radius:12px; padding:12px; white-space:pre-wrap; min-height:120px; }
+    .note{ opacity:.8; font-size:.92rem; }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <h1>SPM — nagrywanie</h1>
+  <h1>SPM – nagrywanie</h1>
 
-    <fieldset>
-      <legend>Dane ucznia</legend>
-      <div class="row">
-        <div><label>Imię</label><input id="imie"></div>
-        <div><label>Nazwisko</label><input id="nazwisko"></div>
-      </div>
-      <div class="row">
-        <div><label>E-mail</label><input id="email" type="email"></div>
-        <div><label>Miejscowość</label><input id="miejscowosc"></div>
-      </div>
-      <div class="row">
-        <div><label>Tytuł utworu</label><input id="tytul"></div>
-      </div>
-    </fieldset>
-
-    <fieldset>
-      <legend>Nagrywanie</legend>
-      <div>
-        <button id="btnStart" class="inline">Start</button>
-        <button id="btnStop" class="inline" disabled>Stop</button>
-        <button id="btnDownload" class="inline" disabled>Pobierz</button>
-      </div>
-      <audio id="preview" controls></audio>
-      <div class="hint">Format: WebM/Opus (MediaRecorder). Pasek czasu działa w przeglądarce.</div>
-    </fieldset>
-
-    <fieldset>
-      <legend>Wysyłka na Drive</legend>
-      <button id="btnUpload" class="primary inline" disabled>Wyślij na Drive</button>
-      <div id="driveLinks" class="links"></div>
-    </fieldset>
-
-    <fieldset>
-      <legend>Przekazanie do SPM</legend>
-      <button id="btnSend" class="inline" disabled>Wyślij do SPM i zamknij</button>
-      <button id="btnCopy" class="inline" disabled>Kopiuj token (awaryjnie)</button>
-      <div class="hint">„Wyślij do SPM” używa postMessage → strona SPM zapisze plik w bibliotece i CMS.</div>
-    </fieldset>
-
-    <fieldset>
-      <legend>Log</legend>
-      <pre id="log" class="log"></pre>
-    </fieldset>
+  <!-- 1) Dane ucznia -->
+  <div class="card">
+    <div class="row"><label>Imię</label><input id="imie" type="text" /></div>
+    <div class="row"><label>Nazwisko</label><input id="nazwisko" type="text" /></div>
+    <div class="row"><label>E-mail</label><input id="email" type="email" /></div>
+    <div class="row"><label>Miejscowość</label><input id="miejscowosc" type="text" /></div>
+    <div class="row"><label>Tytuł utworu</label><input id="tytul" type="text" /></div>
   </div>
 
+  <!-- 2) Nagrywanie -->
+  <h2>Nagrywanie</h2>
+  <div class="card">
+    <div>
+      <button id="btnStart">Start</button>
+      <button id="btnStop" class="secondary" disabled>Stop</button>
+      <button id="btnDownload" class="secondary" disabled>Pobierz</button>
+    </div>
+    <div style="margin-top:12px">
+      <audio id="player" controls></audio>
+    </div>
+    <div class="note">Format: WebM/Opus (MediaRecorder). Pasek czasu działa w przeglądarce.</div>
+  </div>
+
+  <!-- 3) Wysyłka na Drive -->
+  <h2>Wysyłka na Drive</h2>
+  <div class="card">
+    <button id="btnUpload" class="warn" disabled>Wyślij na Drive</button>
+    <div style="margin-top:10px">
+      <a id="aView" class="inline" href="#" target="_blank" rel="noopener" hidden>🔎 Podgląd (Drive)</a>
+      <a id="aDl" class="inline" href="#" target="_blank" rel="noopener" hidden>⬇️ Pobierz (direct)</a>
+      <div id="fileIdLine" class="note" hidden>fileId: <span id="fileIdSpan"></span></div>
+    </div>
+  </div>
+
+  <!-- 4) Przekazanie do SPM -->
+  <h2>Przekazanie do SPM</h2>
+  <div class="card">
+    <button id="sendToSpmBtn" disabled>Wyślij do SPM i zamknij</button>
+    <button id="copyTokenBtn" class="secondary" disabled>Kopiuj token (awaryjnie)</button>
+    <div class="note">„Wyślij do SPM” zapisze także metadane do Google Sheets.</div>
+  </div>
+
+  <!-- Log -->
+  <h2>Log</h2>
+  <pre id="log"></pre>
+
 <script>
-  // KONFIG
-  const PROXY_URL     = '/.netlify/functions/spm';         // Netlify function (proxy → Apps Script)
-  const PARENT_ORIGIN = 'https://TWOJA-DOMENA-WIX';        // <--- WSTAW: domena SPM (Wix)
+/* ========= USTAWIENIA ========= */
+// Adres rodzica (Wix). Jeśli otwarte bez rodzica – bezpieczny fallback.
+const PARENT_ORIGIN = new URLSearchParams(location.search).get('parent') || '*';
+const FN_URL = '/.netlify/functions/spm'; // nasza funkcja Netlify (proxy do Apps Script)
 
-  // Prefill z parametru ?q= (JSON)
-  try {
-    const url = new URL(location.href);
-    const q = url.searchParams.get('q');
-    if (q) {
-      const pre = JSON.parse(decodeURIComponent(q));
-      for (const k of ['imie','nazwisko','email','miejscowosc','tytul']) {
-        if (pre[k]) document.getElementById(k).value = pre[k];
-      }
-    }
-  } catch {}
+/* ========= ZMIENNE ========= */
+let mediaRecorder, chunks = [], recordedBlob = null, startedAt = 0, durationMs = 0;
+let fileName = '', mimeType = 'audio/webm';
+let lastToken = ''; // 'SPM:' + base64(meta)
 
-  let mediaRecorder, chunks = [];
-  let audioBlob = null, durationMs = 0, fileInfo = null;
-
-  const $ = s => document.querySelector(s);
-  const log = (...a)=>{ const el=$('#log'); el.textContent += a.join(' ') + '\n'; el.scrollTop = el.scrollHeight; };
-
-  // Nagrywanie
-  $('#btnStart').addEventListener('click', async () => {
-    try{
-      const stream = await navigator.mediaDevices.getUserMedia({ audio:true });
-      chunks = [];
-      mediaRecorder = new MediaRecorder(stream, { mimeType:'audio/webm' });
-      const t0 = performance.now();
-      mediaRecorder.ondataavailable = e => { if(e.data && e.data.size) chunks.push(e.data); };
-      mediaRecorder.onstop = () => {
-        const t1 = performance.now();
-        durationMs = Math.round(t1 - t0);
-        audioBlob = new Blob(chunks, { type:'audio/webm' });
-        const url = URL.createObjectURL(audioBlob);
-        const audio = $('#preview'); audio.src = url; audio.load();
-        $('#btnDownload').disabled = false;
-        $('#btnUpload').disabled = false;
-        log('Nagrywanie OK. Czas ~', durationMs, 'ms; rozmiar ~', Math.round(audioBlob.size/1024),'KB');
-        stream.getTracks().forEach(t => t.stop());
-      };
-      mediaRecorder.start();
-      $('#btnStart').disabled = true; $('#btnStop').disabled = false;
-      log('Nagrywanie…');
-    }catch(err){ alert('Brak dostępu do mikrofonu.'); log('getUserMedia:', err.message||err); }
+/* ========= POMOCNICZE ========= */
+const $ = (id)=>document.getElementById(id);
+function log(msg){ $('log').textContent += msg + '\n'; }
+function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
+function ts(){ return new Date().toISOString().replace(/[:.]/g,'-'); }
+function sanitize(s){ return (s||'').trim().replace(/\s+/g,'_').replace(/[^\w\-\.]+/g,''); }
+function blobToBase64(blob){
+  return new Promise((res,rej)=>{
+    const fr=new FileReader(); fr.onload=()=>res(fr.result.split(',')[1]); fr.onerror=rej; fr.readAsDataURL(blob);
   });
-  $('#btnStop').addEventListener('click', () => {
-    try{ if(mediaRecorder?.state==='recording') mediaRecorder.stop();
-      $('#btnStop').disabled = true; $('#btnStart').disabled = false;
-    }catch(e){ log('stop:', e.message||e); }
-  });
-  $('#btnDownload').addEventListener('click', () => {
-    if(!audioBlob) return;
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(audioBlob);
-    a.download = buildFileName(); document.body.appendChild(a); a.click(); a.remove();
-  });
+}
 
-  // Upload do Drive (Apps Script przez proxy)
-  $('#btnUpload').addEventListener('click', async () => {
-    if(!audioBlob) return alert('Brak nagrania.');
-    try{
-      toggle(true);
-      log('Konwersja na base64…');
-      const base64 = await blobToBase64(audioBlob);
-      const payload = {
+/* ========= NAGRYWANIE ========= */
+$('btnStart').onclick = async ()=>{
+  try{
+    const stream = await navigator.mediaDevices.getUserMedia({audio:true});
+    chunks = []; recordedBlob = null; durationMs = 0; startedAt = Date.now();
+    mediaRecorder = new MediaRecorder(stream, {mimeType});
+    mediaRecorder.ondataavailable = e => { if(e.data && e.data.size) chunks.push(e.data); };
+    mediaRecorder.onstop = async ()=>{
+      durationMs = Date.now() - startedAt;
+      recordedBlob = new Blob(chunks, {type:mimeType});
+      $('player').src = URL.createObjectURL(recordedBlob);
+      const i = sanitize($('imie').value), n = sanitize($('nazwisko').value), t = sanitize($('tytul').value);
+      fileName = `SPM-${ts()}-${i||'imie'}-${n||'nazw'}-${t||'tytul'}.webm`;
+      $('btnDownload').disabled = false;
+      $('btnUpload').disabled = false;
+      $('sendToSpmBtn').disabled = true;
+      $('copyTokenBtn').disabled = true;
+      log(`Nagrywanie OK. Czas ~ ${durationMs} ms; rozmiar ~ ${Math.round(recordedBlob.size/1024)} KB`);
+    };
+    mediaRecorder.start();
+    $('btnStart').disabled = true;
+    $('btnStop').disabled = false;
+    log('Nagrywanie…');
+  }catch(e){ alert('Brak dostępu do mikrofonu.'); log('BŁĄD mikrofon: '+e); }
+};
+
+$('btnStop').onclick = ()=>{
+  if(mediaRecorder && mediaRecorder.state==='recording'){
+    mediaRecorder.stop();
+    mediaRecorder.stream.getTracks().forEach(t=>t.stop());
+    $('btnStart').disabled = false;
+    $('btnStop').disabled = true;
+  }
+};
+
+$('btnDownload').onclick = ()=>{
+  if(!recordedBlob) return;
+  const a=document.createElement('a'); a.href=URL.createObjectURL(recordedBlob); a.download=fileName; a.click();
+};
+
+/* ========= UPLOAD NA DRIVE ========= */
+$('btnUpload').onclick = async ()=>{
+  if(!recordedBlob){ alert('Najpierw nagraj.'); return; }
+  try{
+    log('Konwersja na base64…');
+    const base64 = await blobToBase64(recordedBlob);
+
+    log('Wysyłanie do proxy…');
+    const r = await fetch(FN_URL, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
         action:'upload',
-        fileBase64:base64,
-        mimeType: audioBlob.type || 'audio/webm',
-        fileName: buildFileName(),
-        meta: readMeta()
-      };
-      log('Wysyłanie do proxy…');
-      const r = await fetch(PROXY_URL, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
-      const txt = await r.text();
-      let data; try{ data = JSON.parse(txt); }catch{ log('RAW proxy:\n'+txt.slice(0,600)); throw new Error('Nieprawidłowy JSON (proxy)'); }
-      if(!data.ok){ if(data.raw) log('RAW upstream:\n'+String(data.raw).slice(0,600)); throw new Error(data.error||'Upload fail'); }
-      fileInfo = data;
-      $('#btnSend').disabled = false;
-      $('#btnCopy').disabled = false;
-      document.getElementById('driveLinks').innerHTML = `
-        <div>📄 <a href="${data.viewLink}" target="_blank" rel="noopener">Podgląd (Drive)</a></div>
-        <div>⬇️ <a href="${data.downloadLink}" target="_blank" rel="noopener">Pobierz (direct)</a></div>
-        <div class="hint">fileId: ${data.fileId}</div>`;
-      log('Upload OK, fileId:', data.fileId);
-    }catch(err){ alert(err.message||err); log('Upload:', err.message||err); }
-    finally{ toggle(false); }
-  });
+        fileBase64: base64,
+        mimeType,
+        fileName
+      })
+    });
+    const j = await r.json();
+    if(!j.ok) throw new Error(j.error || 'Upload failed');
 
-  // Wyślij do SPM (postMessage + zamknięcie)
-  $('#btnSend').addEventListener('click', () => {
-    const meta = readMeta();
-    if (!validateMeta(meta)) return;
-    const payload = {
-      ...meta,
-      durationMs,
-      fileId: fileInfo?.fileId || '',
-      viewLink: fileInfo?.viewLink || '',
-      downloadLink: fileInfo?.downloadLink || '',
-      fileName: fileInfo?.name || buildFileName(),
-      mimeType: fileInfo?.mimeType || (audioBlob?.type || 'audio/webm')
+    // pokaż linki
+    $('aView').href = j.viewLink; $('aView').hidden = false;
+    $('aDl').href   = j.downloadLink; $('aDl').hidden = false;
+    $('fileIdSpan').textContent = j.fileId; $('fileIdLine').hidden = false;
+    log(`Upload OK, fileId: ${j.fileId}`);
+
+    // zbuduj meta i token
+    const meta = {
+      imie: $('imie').value, nazwisko: $('nazwisko').value, email: $('email').value,
+      miejscowosc: $('miejscowosc').value, tytul: $('tytul').value,
+      durationMs, fileId: j.fileId, viewLink: j.viewLink, downloadLink: j.downloadLink,
+      fileName, mimeType
     };
-    try {
-      window.opener && window.opener.postMessage({ type:'spmUpload', payload }, PARENT_ORIGIN);
-    } catch(e) {}
-    window.close(); // zamknij popup
-  });
-
-  // Kopiuj (awaryjnie)
-  $('#btnCopy').addEventListener('click', async () => {
-    const meta = readMeta();
-    if (!validateMeta(meta)) return;
-    const payload = {
-      ...meta,
-      durationMs,
-      fileId: fileInfo?.fileId || '',
-      viewLink: fileInfo?.viewLink || '',
-      downloadLink: fileInfo?.downloadLink || '',
-      fileName: fileInfo?.name || buildFileName(),
-      mimeType: fileInfo?.mimeType || (audioBlob?.type || 'audio/webm')
-    };
-    const token = 'SPM:' + btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
-    try { await navigator.clipboard.writeText(token); alert('Skopiowano token.'); }
-    catch { alert('Skopiuj ręcznie:\n' + token); }
-  });
-
-  // Helpery
-  function readMeta(){ return {
-    imie:$('#imie').value.trim(),
-    nazwisko:$('#nazwisko').value.trim(),
-    email:$('#email').value.trim(),
-    miejscowosc:$('#miejscowosc').value.trim(),
-    tytul:$('#tytul').value.trim()
-  }; }
-  function validateMeta(m){ const miss = Object.entries(m).filter(([k,v])=>!v).map(([k])=>k);
-    if(miss.length){ alert('Brakujące pola: '+miss.join(', ')); return false; } return true; }
-  function slug(s){ return (s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-Z0-9\-_. ]+/g,' ').trim().replace(/\s+/g,'-'); }
-  function buildFileName(){
-    const m = readMeta(); const now = new Date().toISOString().replace(/[:.]/g,'-');
-    return `SPM-${now}-${slug(m.imie)}-${slug(m.nazwisko)}-${slug(m.tytul||'nagranie')}.webm`;
+    lastToken = 'SPM:' + btoa(JSON.stringify(meta));
+    $('sendToSpmBtn').disabled = false;
+    $('copyTokenBtn').disabled = false;
+  }catch(e){
+    log('BŁĄD upload: '+e.message);
+    alert('Upload nieudany: '+e.message);
   }
-  function toggle(dis){ ['#btnStart','#btnStop','#btnDownload','#btnUpload','#btnSend','#btnCopy']
-    .forEach(id=>{ const el=$(id); if(el) el.disabled = dis && (id!=='#btnStop'); }); }
-  function blobToBase64(blob){
-    return new Promise((res,rej)=>{ const r=new FileReader();
-      r.onloadend=()=>{ try{ res(String(r.result).split(',')[1]); }catch(e){ rej(e); } };
-      r.onerror=rej; r.readAsDataURL(blob); });
+};
+
+/* ========= ZAPIS DO SHEETS + WYŚLIJ DO SPM ========= */
+$('sendToSpmBtn').onclick = async ()=>{
+  if(!lastToken){ alert('Brak tokena – wyślij najpierw na Drive.'); return; }
+  try{
+    const meta = JSON.parse(atob(lastToken.replace(/^SPM:/,'')));
+    log('Zapis do Sheets…');
+    const r = await fetch(FN_URL, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ action:'meta', meta })
+    });
+    const j = await r.json();
+    if(!j.ok) throw new Error(j.error || 'Sheets error');
+    log('Sheets: OK (wiersz '+j.row+')');
+
+    // Przekaż dane do strony SPM (Wix)
+    if(window.opener){
+      window.opener.postMessage({ type:'spmUpload', payload: meta }, PARENT_ORIGIN);
+    }
+    try{ window.close(); }catch(_){}
+  }catch(e){
+    log('Sheets/SPM błąd: '+(e.message||e));
+    alert('Nie udało się zapisać do Sheets: '+(e.message||e));
   }
+};
+
+/* ========= KOPIOWANIE TOKENU ========= */
+$('copyTokenBtn').onclick = async ()=>{
+  if(!lastToken){ alert('Brak tokena.'); return; }
+  await navigator.clipboard.writeText(lastToken);
+  log('Skopiowano token.');
+};
 </script>
 </body>
 </html>
