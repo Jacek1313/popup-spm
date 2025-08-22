@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>SPM — nagrywanie (odsłuchowy podkład)</title>
+  <title>SPM — nagrywanie (podkład z Wixa)</title>
   <style>
     :root { color-scheme: dark; }
     body { font-family: system-ui, Arial, sans-serif; margin: 24px; background:#111; color:#eee; }
@@ -15,6 +15,7 @@
     button{ padding:10px 14px; border-radius:8px; border:0; background:#2e7d32; color:#fff; cursor:pointer; }
     button.secondary{ background:#444; }
     button.warn{ background:#1565c0; }
+    button.danger{ background:#8e1b1b; }
     button:disabled{ opacity:.6; cursor:not-allowed; }
     a.inline { display:inline-block; margin:6px 8px 0 0; }
     .card{ border:1px solid #272727; border-radius:12px; padding:16px; margin:18px 0; background:#141414; }
@@ -36,16 +37,12 @@
     <div class="row"><label>Tytuł utworu</label><input id="tytul" type="text" /></div>
   </div>
 
-  <!-- 2) Podkład (TYLKO ODSŁUCH) -->
+  <!-- 2) Podkład (TYLKO ODSŁUCH; przychodzi z Wixa) -->
   <h2>Podkład (odsłuch)</h2>
   <div class="card">
     <div class="row">
-      <label>Plik z dysku</label>
-      <input id="trackFile" type="file" accept="audio/*" />
-    </div>
-    <div class="row">
-      <label>Albo link (MP3/WAV)</label>
-      <input id="trackUrl" type="url" placeholder="https://… (tylko odsłuch; CORS nie jest wymagany)" />
+      <label>URL podkładu</label>
+      <input id="trackUrl" type="url" placeholder="zostanie ustawiony automatycznie z Wixa" />
     </div>
     <div class="inline-controls" style="margin-top:8px">
       <label for="trackVol">Głośność podkładu</label>
@@ -53,7 +50,7 @@
       <span id="trackVolVal" class="val">70%</span>
     </div>
     <audio id="backing" controls preload="auto" style="width:100%; margin-top:10px;"></audio>
-    <div class="note">Podkład gra w słuchawkach podczas nagrywania. <b>Nie zapisuje się</b> w pliku — nagrywa się tylko Twój mikrofon.</div>
+    <div class="note">Podkład gra w słuchawkach podczas nagrania. <b>Nie zapisuje się</b> w pliku — nagrywa się tylko mikrofon.</div>
   </div>
 
   <!-- 3) Nagrywanie -->
@@ -68,19 +65,21 @@
       <audio id="player" controls></audio>
     </div>
 
-    <!-- 3b) Odsłuch po nagraniu z podkładem (opcjonalnie) -->
+    <!-- 3b) Odsłuch po nagraniu z podkładem -->
     <div style="margin-top:14px" class="inline-controls">
-      <label><input id="playWithBacking" type="checkbox" /> Podkład przy odsłuchu</label>
+      <button id="btnAudition" class="warn" disabled>Odsłuchaj (z podkładem)</button>
+      <button id="btnStopAud" class="danger" disabled>Zatrzymaj odsłuch</button>
+
       <label for="offsetMs">Korekta przesunięcia</label>
-      <input id="offsetMs" type="range" min="-500" max="500" step="10" value="0" />
+      <input id="offsetMs" type="range" min="-800" max="800" step="10" value="0" />
       <span id="offsetVal" class="val">0 ms</span>
 
       <label for="tempoPct">Korekta tempa</label>
-      <input id="tempoPct" type="range" min="-0.5" max="0.5" step="0.05" value="0" />
+      <input id="tempoPct" type="range" min="-1" max="1" step="0.05" value="0" />
       <span id="tempoVal" class="val">0.00%</span>
     </div>
 
-    <div class="note">Jeśli po odsłuchu czujesz minimalny „rozjazd”, użyj suwaków: <b>przesunięcie</b> (ms) i <b>tempo</b> (±0,5%) — działa wyłącznie w odsłuchu.</div>
+    <div class="note">Jeśli czujesz „rozjazd”, użyj suwaków: <b>przesunięcie</b> (ms) i <b>tempo</b> (±1%) — działa tylko w odsłuchu.</div>
   </div>
 
   <!-- 4) Wysyłka na Drive -->
@@ -108,21 +107,19 @@
 
 <script>
 /* ========= USTAWIENIA ========= */
-const PARENT_ORIGIN = new URLSearchParams(location.search).get('parent') || '*';
 const FN_URL = '/.netlify/functions/spm';
+const PARENT_ORIGIN = new URLSearchParams(location.search).get('parent') || '*';
 
 /* ========= ZMIENNE ========= */
 let mediaRecorder, chunks = [], recordedBlob = null, startedAt = 0, durationMs = 0;
 let fileName = '', mimeType = 'audio/webm';
 let lastToken = '';
 
-let micStream = null;
 const backing = document.getElementById('backing');
-
-/* Odsłuch po nagraniu: synchronizacja */
-let offsetMs = 0;          // przesunięcie podkładu względem nagrania (tylko w odsłuchu)
-let tempoPct = 0;          // zmiana tempa podkładu w odsłuchu (±0.5%)
-let resyncTimer = null;    // drobne autodosynchronizacje
+const player  = document.getElementById('player');
+let offsetMs = 0;       // przesunięcie podkładu względem nagrania (odsłuch)
+let tempoPct = 0;       // zmiana tempa podkładu (odsłuch)
+let resyncTimer = null;
 
 /* ========= POMOCNICZE ========= */
 const $ = (id)=>document.getElementById(id);
@@ -130,26 +127,38 @@ function log(msg){ $('log').textContent += msg + '\n'; }
 function ts(){ return new Date().toISOString().replace(/[:.]/g,'-'); }
 function sanitize(s){ return (s||'').trim().replace(/\s+/g,'_').replace(/[^\w\-\.]+/g,''); }
 function blobToBase64(blob){ return new Promise((res,rej)=>{ const fr=new FileReader(); fr.onload=()=>res(fr.result.split(',')[1]); fr.onerror=rej; fr.readAsDataURL(blob); }); }
+function parseQ(){
+  try {
+    const q = new URLSearchParams(location.search).get('q');
+    if (!q) return {};
+    return JSON.parse(decodeURIComponent(q));
+  } catch(_) { return {}; }
+}
 
-/* ========= PODKŁAD (tylko odsłuch) ========= */
-$('trackFile').addEventListener('change', e=>{
-  const f = e.target.files && e.target.files[0];
-  if(!f) return;
-  backing.src = URL.createObjectURL(f);
-  backing.load();
-  log('Podkład: plik z dysku ustawiony.');
-});
+/* ========= INICJALIZACJA (prefill + podkład z Wixa) ========= */
+(function init(){
+  const q = parseQ();
+  if (q.imie)        $('imie').value = q.imie;
+  if (q.nazwisko)    $('nazwisko').value = q.nazwisko;
+  if (q.email)       $('email').value = q.email;
+  if (q.miejscowosc) $('miejscowosc').value = q.miejscowosc;
+  if (q.tytul)       $('tytul').value = q.tytul;
+  if (q.trackUrl) {
+    $('trackUrl').value = q.trackUrl;
+    backing.src = q.trackUrl;
+    backing.load();
+    log('Podkład ustawiony z Wixa.');
+  }
+})();
+
+/* ========= PODKŁAD (głośność + ręczna zmiana URL) ========= */
 $('trackUrl').addEventListener('change', e=>{
   const url = (e.target.value||'').trim();
-  if(!url) return;
-  backing.src = url;
-  backing.load();
-  log('Podkład: link ustawiony.');
+  if (url) { backing.src = url; backing.load(); log('Podkład: URL zmieniony.'); }
 });
 $('trackVol').addEventListener('input', e=>{
   const v = parseFloat(e.target.value||'0.7');
-  backing.volume = v;
-  $('trackVolVal').textContent = Math.round(v*100) + '%';
+  backing.volume = v; $('trackVolVal').textContent = Math.round(v*100) + '%';
 });
 backing.volume = parseFloat($('trackVol').value||'0.7');
 backing.preservesPitch = true; backing.mozPreservesPitch = true; backing.webkitPreservesPitch = true;
@@ -157,7 +166,7 @@ backing.preservesPitch = true; backing.mozPreservesPitch = true; backing.webkitP
 /* ========= NAGRYWANIE ========= */
 $('btnStart').onclick = async ()=>{
   try{
-    micStream = await navigator.mediaDevices.getUserMedia({audio:true});
+    const micStream = await navigator.mediaDevices.getUserMedia({audio:true});
     chunks = []; recordedBlob = null; durationMs = 0; startedAt = Date.now();
 
     mediaRecorder = new MediaRecorder(micStream, {mimeType});
@@ -165,25 +174,25 @@ $('btnStart').onclick = async ()=>{
     mediaRecorder.onstop = ()=>{
       durationMs = Date.now() - startedAt;
       recordedBlob = new Blob(chunks, {type:mimeType});
-      $('player').src = URL.createObjectURL(recordedBlob);
+      player.src = URL.createObjectURL(recordedBlob);
       const i = sanitize($('imie').value), n = sanitize($('nazwisko').value), t = sanitize($('tytul').value);
       fileName = `SPM-${ts()}-${i||'imie'}-${n||'nazw'}-${t||'tytul'}.webm`;
       $('btnDownload').disabled = false;
-      $('btnUpload').disabled = false;
+      $('btnUpload').disabled   = false;
+      $('btnAudition').disabled = false;
+      $('btnStopAud').disabled  = true;
       $('sendToSpmBtn').disabled = true;
       $('copyTokenBtn').disabled = true;
       log(`Nagranie gotowe. Czas ~ ${durationMs} ms; rozmiar ~ ${Math.round(recordedBlob.size/1024)} KB`);
     };
 
-    // uruchom podkład (jeśli ustawiony) i nagrywanie – tylko odsłuch
-    try{
-      if (backing.src) { backing.currentTime = 0; await backing.play(); }
-    }catch(e){ log('Uwaga: podkład nie wystartował ('+e.message+').'); }
+    // start: najpierw podkład (jeśli jest), potem nagrywanie
+    try { if (backing.src) { backing.currentTime = 0; await backing.play(); } } catch(e) { log('Uwaga: podkład nie wystartował ('+e.message+').'); }
     mediaRecorder.start();
 
     $('btnStart').disabled = true;
     $('btnStop').disabled = false;
-    log('Nagrywanie… (podkład: tylko w słuchawkach)');
+    log('Nagrywanie… (podkład tylko w słuchawkach)');
   }catch(e){
     alert('Brak dostępu do mikrofonu.');
     log('BŁĄD mikrofon: '+e.message);
@@ -205,66 +214,52 @@ $('btnDownload').onclick = ()=>{
   const a=document.createElement('a'); a.href=URL.createObjectURL(recordedBlob); a.download=fileName; a.click();
 };
 
-/* ========= ODSŁUCH PO NAGRANIU (z podkładem, opcjonalnie) ========= */
-$('playWithBacking').addEventListener('change', ()=>{
-  // jeśli włączasz w trakcie odtwarzania – dopasuj
-  if ($('playWithBacking').checked && !$('player').paused && backing.src) {
-    resyncBackingToPlayer();
-    safePlayBacking();
-  } else {
-    backing.pause();
-  }
-});
-
+/* ========= ODSŁUCH PO NAGRANIU: jednoczesne PLAY (nagranie + podkład) ========= */
 $('offsetMs').addEventListener('input', e=>{
   offsetMs = parseInt(e.target.value,10)||0;
   $('offsetVal').textContent = `${offsetMs} ms`;
-  if ($('playWithBacking').checked && !$('player').paused) resyncBackingToPlayer();
+  if (!player.paused) resyncBackingToPlayer();
 });
-
 $('tempoPct').addEventListener('input', e=>{
   tempoPct = parseFloat(e.target.value)||0;
   $('tempoVal').textContent = `${tempoPct.toFixed(2)}%`;
   backing.playbackRate = 1 + (tempoPct/100);
 });
 
-/* player steruje backingiem w odsłuchu */
-$('player').addEventListener('play', ()=>{
-  if ($('playWithBacking').checked && backing.src) {
-    resyncBackingToPlayer();
-    safePlayBacking();
-    startAutoResync();
-  }
-});
-$('player').addEventListener('pause', ()=>{
-  try{ backing.pause(); }catch(_){}
-  stopAutoResync();
-});
-$('player').addEventListener('seeking', ()=>{ if($('playWithBacking').checked) resyncBackingToPlayer(); });
-$('player').addEventListener('seeked',  ()=>{ if($('playWithBacking').checked) resyncBackingToPlayer(); });
-$('player').addEventListener('ratechange', ()=>{ if($('playWithBacking').checked) resyncBackingToPlayer(); });
-$('player').addEventListener('ended', ()=>{
-  try{ backing.pause(); }catch(_){}
-  stopAutoResync();
-});
+$('btnAudition').onclick = ()=>{
+  if (!recordedBlob || !backing.src) { alert('Brak nagrania lub podkładu.'); return; }
+  // ustaw i start
+  resyncBackingToPlayer();
+  try { backing.play(); } catch(_) {}
+  try { player.play(); }  catch(_) {}
+  $('btnAudition').disabled = true;
+  $('btnStopAud').disabled  = false;
+  startAutoResync();
+};
 
-/* drobne autodosynchronizacje (skoki tylko gdy różnica > 120 ms) */
+$('btnStopAud').onclick = ()=>{
+  try { player.pause(); } catch(_) {}
+  try { backing.pause(); } catch(_) {}
+  stopAutoResync();
+  $('btnAudition').disabled = false;
+  $('btnStopAud').disabled  = true;
+};
+
+// autodosynchronizacja podczas odsłuchu (tylko gdy różnica > 120 ms)
 function startAutoResync(){
   stopAutoResync();
   resyncTimer = setInterval(()=>{
-    if (!$('playWithBacking').checked) return;
-    const target = $('player').currentTime + offsetMs/1000;
+    const target = player.currentTime + offsetMs/1000;
     const diff = Math.abs((backing.currentTime||0) - target);
     if (diff > 0.12) backing.currentTime = Math.max(0, target);
   }, 500);
 }
-function stopAutoResync(){ if(resyncTimer){ clearInterval(resyncTimer); resyncTimer=null; } }
+function stopAutoResync(){ if (resyncTimer){ clearInterval(resyncTimer); resyncTimer=null; } }
 function resyncBackingToPlayer(){
-  const target = $('player').currentTime + offsetMs/1000;
+  const target = player.currentTime + offsetMs/1000;
   backing.currentTime = Math.max(0, target);
   backing.playbackRate = 1 + (tempoPct/100);
 }
-function safePlayBacking(){ backing.play().catch(()=>{}); }
 
 /* ========= UPLOAD NA DRIVE ========= */
 $('btnUpload').onclick = async ()=>{
@@ -287,7 +282,7 @@ $('btnUpload').onclick = async ()=>{
     $('fileIdSpan').textContent = j.fileId; $('fileIdLine').hidden = false;
     log(`Upload OK, fileId: ${j.fileId}`);
 
-    // zbuduj meta i token
+    // meta + token
     const meta = {
       imie: $('imie').value, nazwisko: $('nazwisko').value, email: $('email').value,
       miejscowosc: $('miejscowosc').value, tytul: $('tytul').value,
@@ -303,7 +298,7 @@ $('btnUpload').onclick = async ()=>{
   }
 };
 
-/* ========= ZAPIS DO SHEETS + WYŚLIJ DO SPM ========= */
+/* ========= ZAPIS DO SHEETS + postMessage do WIX ========= */
 $('sendToSpmBtn').onclick = async ()=>{
   if(!lastToken){ alert('Brak tokena – wyślij najpierw na Drive.'); return; }
   try{
@@ -318,7 +313,6 @@ $('sendToSpmBtn').onclick = async ()=>{
     if(!j.ok) throw new Error(j.error || 'Sheets error');
     log('Sheets: OK (wiersz '+j.row+')');
 
-    // Przekaż dane do strony SPM (Wix)
     if(window.opener){
       window.opener.postMessage({ type:'spmUpload', payload: meta }, PARENT_ORIGIN);
     }
@@ -329,7 +323,7 @@ $('sendToSpmBtn').onclick = async ()=>{
   }
 };
 
-/* ========= KOPIOWANIE TOKENU ========= */
+/* ========= TOKEN (awaryjnie) ========= */
 $('copyTokenBtn').onclick = async ()=>{
   if(!lastToken){ alert('Brak tokena.'); return; }
   await navigator.clipboard.writeText(lastToken);
