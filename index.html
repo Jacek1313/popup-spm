@@ -21,6 +21,8 @@
     .note{ opacity:.85; font-size:.92rem; }
     .val{ display:inline-block; min-width:70px; text-align:right; opacity:.9; }
     .inline-controls{ display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
+    /* ukrywa natywne UI <audio> — sterujemy przyciskami globalnymi */
+    .hidden-audio { display:none; }
   </style>
 </head>
 <body>
@@ -34,7 +36,8 @@
       <input id="trackVol" type="range" min="0" max="1" step="0.01" value="0.7" />
       <span id="trackVolVal" class="val">70%</span>
     </div>
-    <audio id="backing" controls preload="auto" style="width:100%; margin-top:10px;"></audio>
+    <!-- ukryty element audio -->
+    <audio id="backing" preload="auto" class="hidden-audio"></audio>
     <div class="note">Podkład gra w słuchawkach podczas nagrania. <b>Nie zapisuje się</b> w pliku — nagrywa się tylko mikrofon.</div>
   </div>
 
@@ -46,9 +49,8 @@
       <button id="btnStop" class="secondary" disabled>Stop</button>
       <button id="btnDownload" class="secondary" disabled>Pobierz</button>
     </div>
-    <div style="margin-top:12px">
-      <audio id="player" controls></audio>
-    </div>
+    <!-- ukryty player nagrania -->
+    <audio id="player" class="hidden-audio"></audio>
 
     <!-- Odsłuch po nagraniu z podkładem -->
     <div style="margin-top:14px" class="inline-controls">
