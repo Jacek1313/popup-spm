@@ -103,19 +103,21 @@ const backing = document.getElementById('backing');
 const player  = document.getElementById('player');
 let offsetMs = 0, tempoPct = 0, resyncTimer = null;
 
-/* ========= POMOCNICZE ========= */
+/* ========= UTIL ========= */
 const $ = (id)=>document.getElementById(id);
 function log(msg){ $('log').textContent += msg + '\n'; }
 function ts(){ return new Date().toISOString().replace(/[:.]/g,'-'); }
 function sanitize(s){ return (s||'').trim().replace(/\s+/g,'_').replace(/[^\w\-\.]+/g,''); }
 function blobToBase64(blob){ return new Promise((res,rej)=>{ const fr=new FileReader(); fr.onload=()=>res(fr.result.split(',')[1]); fr.onerror=rej; fr.readAsDataURL(blob); }); }
 function parseQ(){ try{ const q=new URLSearchParams(location.search).get('q'); return q?JSON.parse(decodeURIComponent(q)) : {}; }catch(_){ return {}; } }
+// Base64 bezpieczne dla UTF-8:
+function b64u(str){ return btoa(unescape(encodeURIComponent(str))); }
+function ub64(b64){ return decodeURIComponent(escape(atob(b64))); }
 
 /* ========= INICJALIZACJA (prefill) ========= */
 let student = { imie:'', nazwisko:'', email:'', miejscowosc:'', tytul:'' };
 (function init(){
   const q = parseQ();
-  // dane ucznia — tylko w pamięci (bez pól widocznych)
   student = {
     imie: q.imie || '', nazwisko: q.nazwisko || '', email: q.email || '',
     miejscowosc: q.miejscowosc || '', tytul: q.tytul || ''
@@ -269,7 +271,8 @@ $('btnUpload').onclick = async ()=>{
       durationMs, fileId: j.fileId, viewLink: j.viewLink, downloadLink: j.downloadLink,
       fileName, mimeType
     };
-    lastToken = 'SPM:' + btoa(JSON.stringify(meta));
+    // UTF-8 safe Base64:
+    lastToken = 'SPM:' + b64u(JSON.stringify(meta));
     $('sendToSpmBtn').disabled = false;
     $('copyTokenBtn').disabled = false;
   }catch(e){
@@ -281,7 +284,7 @@ $('btnUpload').onclick = async ()=>{
 $('sendToSpmBtn').onclick = async ()=>{
   if(!lastToken){ alert('Brak tokena – wyślij najpierw na Drive.'); return; }
   try{
-    const meta = JSON.parse(atob(lastToken.replace(/^SPM:/,'')));
+    const meta = JSON.parse(ub64(lastToken.replace(/^SPM:/,'')));
     log('Zapis do Sheets…');
     const r = await fetch(FN_URL, {
       method:'POST',
