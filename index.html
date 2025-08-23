@@ -21,11 +21,11 @@
     .note{ opacity:.85; font-size:.92rem; }
     .val{ display:inline-block; min-width:70px; text-align:right; opacity:.9; }
     .inline-controls{ display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
-    .hidden-audio { display:none; }
+    .hidden-audio { display:none; } /* chowamy natywne UI <audio> */
     .progress-row{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:10px; }
     .progress-row label{ min-width:120px; opacity:.9; }
     .progress-row input[type="range"]{ width: 360px; }
-    .time{ font-variant-tabular-nums: tabular-nums; opacity:.9; min-width:80px; text-align:right; }
+    .time{ font-variant-numeric: tabular-nums; opacity:.9; min-width:80px; text-align:right; }
   </style>
 </head>
 <body>
@@ -39,12 +39,17 @@
       <input id="trackVol" type="range" min="0" max="1" step="0.01" value="0.7" />
       <span id="trackVolVal" class="val">70%</span>
     </div>
+
+    <!-- Pasek postępu podkładu -->
     <div class="progress-row">
       <label for="backingSeek">Postęp podkładu</label>
       <input id="backingSeek" type="range" min="0" max="0" step="0.01" value="0" />
       <span id="backingTime" class="time">0:00 / 0:00</span>
     </div>
+
+    <!-- ukryty element audio -->
     <audio id="backing" preload="auto" class="hidden-audio"></audio>
+
     <div class="note">Podkład gra w słuchawkach podczas nagrania. <b>Nie zapisuje się</b> w pliku — nagrywa się tylko mikrofon.</div>
   </div>
 
@@ -56,13 +61,18 @@
       <button id="btnStop" class="secondary" disabled>Stop</button>
       <button id="btnDownload" class="secondary" disabled>Pobierz</button>
     </div>
+
+    <!-- Pasek postępu nagrania -->
     <div class="progress-row">
       <label for="playerSeek">Postęp nagrania</label>
       <input id="playerSeek" type="range" min="0" max="0" step="0.01" value="0" />
       <span id="playerTime" class="time">0:00 / 0:00</span>
     </div>
+
+    <!-- ukryty player nagrania -->
     <audio id="player" class="hidden-audio"></audio>
 
+    <!-- Odsłuch po nagraniu z podkładem -->
     <div style="margin-top:14px" class="inline-controls">
       <button id="btnAudition" class="warn" disabled>Odsłuchaj (z podkładem)</button>
       <button id="btnStopAud" class="danger" disabled>Zatrzymaj odsłuch</button>
@@ -75,10 +85,11 @@
       <input id="tempoPct" type="range" min="-1" max="1" step="0.05" value="0" />
       <span id="tempoVal" class="val">0.00%</span>
     </div>
-    <div class="note">Jeśli czujesz „rozjazd”, użyj suwaków: <b>przesunięcie</b> i <b>tempo</b> — działa tylko w odsłuchu.</div>
+
+    <div class="note">Jeśli czujesz „rozjazd”, użyj suwaków: <b>przesunięcie</b> (ms) i <b>tempo</b> (±1%) — działa tylko w odsłuchu.</div>
   </div>
 
-  <!-- 3) Wyślij -->
+  <!-- 3) Jedno-klikowe wysłanie -->
   <h2>Wyślij</h2>
   <div class="card">
     <button id="btnSendAll" class="warn" disabled>Wyślij</button>
@@ -94,26 +105,24 @@
   <pre id="log"></pre>
 
 <script>
-const FN_URL = '/.netlify/functions/spm';
+/* ========= KONFIG ========= */
+const FN_URL = '/.netlify/functions/spm'; // Netlify Functions
+const PARENT_PARAM = new URLSearchParams(location.search).get('parent') || ''; // tylko do info
+// wysyłamy do rodzica bez ograniczania origin — rodzic i tak sprawdza nasz origin
+const PARENT_TARGET = '*';
 
-// parent & q
-const PARENT_PARAM = new URLSearchParams(location.search).get('parent') || '';
-let PARENT_ORIGIN = '*';
-try { PARENT_ORIGIN = new URL(PARENT_PARAM).origin || '*'; } catch(_) {}
-
+/* ========= ZMIENNE ========= */
 let mediaRecorder, chunks = [], recordedBlob = null, startedAt = 0, durationMs = 0;
 let fileName = '', mimeType = 'audio/webm';
-
 const backing = document.getElementById('backing');
 const player  = document.getElementById('player');
 const backingSeek = document.getElementById('backingSeek');
 const playerSeek  = document.getElementById('playerSeek');
 const backingTime = document.getElementById('backingTime');
 const playerTime  = document.getElementById('playerTime');
-
 let offsetMs = 0, tempoPct = 0, resyncTimer = null, rafId = null, isAuditioning = false;
 
-// utils
+/* ========= UTIL ========= */
 const $ = (id)=>document.getElementById(id);
 function log(msg){ $('log').textContent += msg + '\n'; }
 function ts(){ return new Date().toISOString().replace(/[:.]/g,'-'); }
@@ -122,19 +131,19 @@ function blobToBase64(blob){ return new Promise((res,rej)=>{ const fr=new FileRe
 function parseQ(){ try{ const q=new URLSearchParams(location.search).get('q'); return q?JSON.parse(decodeURIComponent(q)) : {}; }catch(_){ return {}; } }
 function fmt(t){ if(!isFinite(t)||t<0) t=0; const m=Math.floor(t/60), s=Math.floor(t%60); return `${m}:${String(s).padStart(2,'0')}`; }
 function clamp(v,min,max){ return Math.min(max, Math.max(min, v)); }
-function safePlay(el){ el.play().catch(()=>{}); }
 
-let student = { imie:'', nazwisko:'', email:'', miejscowosc:'', tytul:'' };
+/* ========= PREFILL ========= */
+let student = { imie:'', nazwisko:'', email:'', miejscowosc:'', tytul:'', trackUrl:'' };
 (function init(){
   const q = parseQ();
   student = {
     imie: q.imie || '', nazwisko: q.nazwisko || '', email: q.email || '',
-    miejscowosc: q.miejscowosc || '', tytul: q.tytul || ''
+    miejscowosc: q.miejscowosc || '', tytul: q.tytul || '', trackUrl: q.trackUrl || ''
   };
-  if (q.trackUrl) { backing.src = q.trackUrl; backing.load(); log('Podkład ustawiony z WIX (#podkladUrl).'); }
+  if (student.trackUrl) { backing.src = student.trackUrl; backing.load(); log('Podkład ustawiony z WIX (#podkladUrl).'); }
 })();
 
-// progres
+/* ========= PROGRESS BARY ========= */
 function refreshProgress(){
   const bd = isFinite(backing.duration) ? backing.duration : 0;
   const bc = isFinite(backing.currentTime) ? backing.currentTime : 0;
@@ -166,13 +175,14 @@ backingSeek.addEventListener('input', ()=>{
   if (isAuditioning) resyncBackingToPlayer();
 });
 
+/* ========= PODKŁAD ========= */
 $('trackVol').addEventListener('input', e=>{
   const v = parseFloat(e.target.value||'0.7'); backing.volume = v; $('trackVolVal').textContent = Math.round(v*100)+'%';
 });
 backing.volume = parseFloat($('trackVol').value||'0.7');
 backing.preservesPitch = true; backing.mozPreservesPitch = true; backing.webkitPreservesPitch = true;
 
-// nagrywanie
+/* ========= NAGRYWANIE ========= */
 $('btnStart').onclick = async ()=>{
   try{
     const micStream = await navigator.mediaDevices.getUserMedia({audio:true});
@@ -206,6 +216,7 @@ $('btnStart').onclick = async ()=>{
     alert('Brak dostępu do mikrofonu.'); log('BŁĄD mikrofon: '+e.message);
   }
 };
+
 $('btnStop').onclick = ()=>{
   if(mediaRecorder && mediaRecorder.state==='recording'){
     mediaRecorder.stop();
@@ -215,12 +226,13 @@ $('btnStop').onclick = ()=>{
     try{ backing.pause(); }catch(_){}
   }
 };
+
 $('btnDownload').onclick = ()=>{
   if(!recordedBlob) return;
   const a=document.createElement('a'); a.href=URL.createObjectURL(recordedBlob); a.download=fileName; a.click();
 };
 
-// odsłuch
+/* ========= ODSŁUCH ========= */
 $('offsetMs').addEventListener('input', e=>{
   offsetMs = parseInt(e.target.value,10)||0;
   $('offsetVal').textContent = `${offsetMs} ms`;
@@ -231,6 +243,7 @@ $('tempoPct').addEventListener('input', e=>{
   $('tempoVal').textContent = `${tempoPct.toFixed(2)}%`;
   backing.playbackRate = 1 + (tempoPct/100);
 });
+
 $('btnAudition').onclick = ()=>{
   if (!recordedBlob || !backing.src) { alert('Brak nagrania lub podkładu.'); return; }
   resyncBackingToPlayer();
@@ -273,8 +286,9 @@ function resyncBackingToPlayer(){
   backing.currentTime = Math.max(0, target);
   backing.playbackRate = 1 + (tempoPct/100);
 }
+function safePlay(el){ el.play().catch(()=>{}); }
 
-// WYŚLIJ
+/* ========= JEDEN PRZYCISK: upload → sheets → postMessage ========= */
 $('btnSendAll').onclick = async ()=>{
   if(!recordedBlob){ alert('Najpierw nagraj.'); return; }
   try{
@@ -313,10 +327,15 @@ $('btnSendAll').onclick = async ()=>{
     if(!m.ok) throw new Error(m.error || 'Sheets error');
     log('Sheets: OK (wiersz '+m.row+')');
 
-    // postMessage do strony SPM + auto-zamknięcie
-    try { if (window.opener) window.opener.postMessage({ type:'spmUpload', payload: meta }, PARENT_ORIGIN); } catch(_){}
-    setTimeout(()=>{ try{ window.close(); }catch(_){} }, 50);
-    setTimeout(()=>{ try{ window.open('','_self'); window.close(); }catch(_){} }, 300);
+    // wyślij do SPM (rodzic sam zamknie okno)
+    if (window.opener) {
+      window.opener.postMessage({ type:'spmUpload', payload: meta }, PARENT_TARGET);
+    }
+
+    // informacyjna nakładka (popup nie zamyka się sam!)
+    document.body.insertAdjacentHTML('beforeend',
+      '<div style="position:fixed;inset:0;background:#0008;display:grid;place-items:center;' +
+      'font:600 16px system-ui">Wysłano. Okno zamknie się automatycznie…</div>');
 
   }catch(e){
     log('BŁĄD: '+(e.message||e));
