@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>SPM — nagrywanie</title>
+  <title>SPM – nagrywanie</title>
   <style>
     :root { color-scheme: dark; }
     body { font-family: system-ui, Arial, sans-serif; margin: 24px; background:#111; color:#eee; }
@@ -21,19 +21,27 @@
     .note{ opacity:.85; font-size:.92rem; }
     .val{ display:inline-block; min-width:70px; text-align:right; opacity:.9; }
     .inline-controls{ display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
-    .hidden-audio { display:none; } /* chowamy natywne UI <audio> */
+    .hidden-audio { display:none; }
     .progress-row{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:10px; }
     .progress-row label{ min-width:120px; opacity:.9; }
     .progress-row input[type="range"]{ width: 360px; }
     .time{ font-variant-tabular-nums: tabular-nums; opacity:.9; min-width:80px; text-align:right; }
-    .banner{
-      position:fixed;left:0;right:0;top:14px;margin:auto;max-width:880px;
-      padding:10px 14px;background:#111;color:#fff;border:1px solid #333;border-radius:10px;
-      text-align:center;z-index:999999;font-family:system-ui,Arial,sans-serif
+
+    /* baner u góry */
+    #banner {
+      position: sticky; top: -8px; z-index: 5;
+      background: #0b0b0b; border:1px solid #333; padding:10px 12px;
+      border-radius:10px; margin-bottom:14px; text-align:center;
+      color:#eaeaea;
     }
+    /* „Czekaj…” – miganie */
+    @keyframes blink { 50% { opacity:.35 } }
+    .blink { animation: blink 0.9s linear infinite; }
   </style>
 </head>
 <body>
+  <div id="banner"></div>
+
   <h1>SPM – nagrywanie</h1>
 
   <!-- 1) Podkład (odsłuch) -->
@@ -52,7 +60,6 @@
     </div>
 
     <audio id="backing" preload="auto" class="hidden-audio"></audio>
-
     <div class="note">Podkład gra w słuchawkach podczas nagrania. <b>Nie zapisuje się</b> w pliku — nagrywa się tylko mikrofon.</div>
   </div>
 
@@ -92,10 +99,13 @@
   <!-- 3) Wysyłka -->
   <h2>Wyślij</h2>
   <div class="card">
-    <button id="btnSendAll" class="warn" disabled>Wyślij</button>
+    <div class="inline-controls">
+      <button id="btnSendAll" class="warn" disabled>Wyślij</button>
+      <button id="btnConfirmSend" class="secondary" style="display:none">Potwierdź wysyłkę</button>
+    </div>
     <div style="margin-top:10px">
       <a id="aView" class="inline" href="#" target="_blank" rel="noopener" hidden>🔎 Podgląd (Drive)</a>
-      <a id="aDl"   class="inline" href="#" target="_blank" rel="noopener" hidden>⬇️ Pobierz (direct)</a>
+      <a id="aDl" class="inline" href="#" target="_blank" rel="noopener" hidden>⬇️ Pobierz (direct)</a>
       <div id="fileIdLine" class="note" hidden>fileId: <span id="fileIdSpan"></span></div>
     </div>
   </div>
@@ -105,69 +115,51 @@
   <pre id="log"></pre>
 
 <script>
-/* ========= Konfiguracja / parametry ========= */
+/* ========= KONFIG ========= */
 const FN_URL = '/.netlify/functions/spm';
-const qs            = new URLSearchParams(location.search);
-const VIA           = (qs.get('via') || '').toLowerCase();             // 'popup' | 'same'
-const parentUrlRaw  = qs.get('parent') || '';
-const PARENT_ORIGIN = parentUrlRaw ? new URL(parentUrlRaw).origin : '*';
+const PARENT_PARAM = new URLSearchParams(location.search).get('parent') || '';
+let PARENT_ORIGIN = '*';
+try { PARENT_ORIGIN = new URL(PARENT_PARAM).origin || '*'; } catch(_) {}
 
-function banner(msg){
-  const el = document.createElement('div'); el.className='banner'; el.textContent = msg; document.body.appendChild(el);
-}
-function tryCloseNow(){
-  // zamykamy tylko jeśli rzeczywiście weszliśmy tu jako pop-up
-  if (VIA === 'popup' && window.opener){
-    let n=0;
-    const id = setInterval(()=>{ n++; try{ window.close(); }catch(_){} if(n>=10){ clearInterval(id); banner('Wysłano. Zamknij to okno, jeśli nie zamknęło się automatycznie.'); } },120);
-    setTimeout(()=>{ try{ open('','_self'); close(); }catch(_){} }, 250);
-  } else {
-    banner('Wysłano. Zamknij tę kartę i wróć do strony SPM.');
-  }
-}
-
-// rodzic może poprosić o zamknięcie
-window.addEventListener('message', (e)=>{
-  if(PARENT_ORIGIN !== '*' && e.origin !== PARENT_ORIGIN) return;
-  if(e.data && e.data.type === 'spm/please-close'){ tryCloseNow(); }
-});
-
-/* ========= Zmienne i elementy ========= */
+/* ========= STAN ========= */
 let mediaRecorder, chunks = [], recordedBlob = null, startedAt = 0, durationMs = 0;
 let fileName = '', mimeType = 'audio/webm';
-const backing = document.getElementById('backing');
-const player  = document.getElementById('player');
-const backingSeek = document.getElementById('backingSeek');
-const playerSeek  = document.getElementById('playerSeek');
-const backingTime = document.getElementById('backingTime');
-const playerTime  = document.getElementById('playerTime');
+let metaToSend = null;   // <- meta do wysłania po „Potwierdź wysyłkę”
+
+const el = id => document.getElementById(id);
+const backing = el('backing');
+const player  = el('player');
+const backingSeek = el('backingSeek');
+const playerSeek  = el('playerSeek');
+const backingTime = el('backingTime');
+const playerTime  = el('playerTime');
+const banner = el('banner');
+
 let offsetMs = 0, tempoPct = 0, resyncTimer = null, rafId = null, isAuditioning = false;
 
-const $ = id => document.getElementById(id);
-function log(msg){ $('log').textContent += msg + '\n'; }
+/* ========= UTIL ========= */
+function log(m){ el('log').textContent += m + '\n'; }
 function ts(){ return new Date().toISOString().replace(/[:.]/g,'-'); }
 function sanitize(s){ return (s||'').trim().replace(/\s+/g,'_').replace(/[^\w\-\.]+/g,''); }
 function blobToBase64(blob){ return new Promise((res,rej)=>{ const fr=new FileReader(); fr.onload=()=>res(fr.result.split(',')[1]); fr.onerror=rej; fr.readAsDataURL(blob); }); }
+function parseQ(){ try{ const q=new URLSearchParams(location.search).get('q'); return q?JSON.parse(decodeURIComponent(q)) : {}; }catch(_){ return {}; } }
 function fmt(t){ if(!isFinite(t)||t<0) t=0; const m=Math.floor(t/60), s=Math.floor(t%60); return `${m}:${String(s).padStart(2,'0')}`; }
 function clamp(v,min,max){ return Math.min(max, Math.max(min, v)); }
+function setBanner(text){ banner.textContent = text || ''; }
 
-function parseQ(){
-  try{ const q = new URLSearchParams(location.search).get('q'); return q ? JSON.parse(decodeURIComponent(q)) : {}; }
-  catch(_){ return {}; }
-}
-
-/* ========= Prefill z SPM ========= */
-let student = { imie:'', nazwisko:'', email:'', miejscowosc:'', tytul:'' };
+/* ========= PREFILL ========= */
+let student = { imie:'', nazwisko:'', email:'', miejscowosc:'', tytul:'', trackUrl:'' };
 (function init(){
   const q = parseQ();
   student = {
     imie: q.imie || '', nazwisko: q.nazwisko || '', email: q.email || '',
-    miejscowosc: q.miejscowosc || '', tytul: q.tytul || ''
+    miejscowosc: q.miejscowosc || '', tytul: q.tytul || '', trackUrl: q.trackUrl || ''
   };
-  if (q.trackUrl) { backing.src = q.trackUrl; backing.load(); log('Podkład ustawiony z WIX (#podkladUrl).'); }
+  if (student.trackUrl) { backing.src = student.trackUrl; backing.load(); log('Podkład ustawiony z WIX (#podkladUrl).'); }
+  setBanner('');
 })();
 
-/* ========= Progress bary ========= */
+/* ========= PROGRESS ========= */
 function refreshProgress(){
   const bd = isFinite(backing.duration) ? backing.duration : 0;
   const bc = isFinite(backing.currentTime) ? backing.currentTime : 0;
@@ -199,15 +191,15 @@ backingSeek.addEventListener('input', ()=>{
   if (isAuditioning) resyncBackingToPlayer();
 });
 
-/* ========= Podkład ========= */
-$('trackVol').addEventListener('input', e=>{
-  const v = parseFloat(e.target.value||'0.7'); backing.volume = v; $('trackVolVal').textContent = Math.round(v*100)+'%';
+/* ========= PODKŁAD ========= */
+el('trackVol').addEventListener('input', e=>{
+  const v = parseFloat(e.target.value||'0.7'); backing.volume = v; el('trackVolVal').textContent = Math.round(v*100)+'%';
 });
-backing.volume = parseFloat($('trackVol').value||'0.7');
+backing.volume = parseFloat(el('trackVol').value||'0.7');
 backing.preservesPitch = true; backing.mozPreservesPitch = true; backing.webkitPreservesPitch = true;
 
-/* ========= Nagrywanie ========= */
-$('btnStart').onclick = async ()=>{
+/* ========= NAGRYWANIE ========= */
+el('btnStart').onclick = async ()=>{
   try{
     const micStream = await navigator.mediaDevices.getUserMedia({audio:true});
     chunks = []; recordedBlob = null; durationMs = 0; startedAt = Date.now();
@@ -222,10 +214,10 @@ $('btnStart').onclick = async ()=>{
       const i = sanitize(student.imie), n = sanitize(student.nazwisko), t = sanitize(student.tytul);
       fileName = `SPM-${ts()}-${i||'imie'}-${n||'nazw'}-${t||'tytul'}.webm`;
 
-      $('btnDownload').disabled = false;
-      $('btnSendAll').disabled  = false;
-      $('btnAudition').disabled = false;
-      $('btnStopAud').disabled  = true;
+      el('btnDownload').disabled = false;
+      el('btnSendAll').disabled  = false;
+      el('btnAudition').disabled = false;
+      el('btnStopAud').disabled  = true;
 
       log(`Nagranie gotowe. Czas ~ ${durationMs} ms; rozmiar ~ ${Math.round(recordedBlob.size/1024)} KB`);
     };
@@ -233,49 +225,49 @@ $('btnStart').onclick = async ()=>{
     try { if (backing.src) { backing.currentTime = 0; await backing.play(); } } catch(e) { log('Uwaga: podkład nie wystartował ('+e.message+').'); }
     mediaRecorder.start();
 
-    $('btnStart').disabled = true;
-    $('btnStop').disabled  = false;
+    el('btnStart').disabled = true;
+    el('btnStop').disabled = false;
     log('Nagrywanie… (podkład tylko w słuchawkach)');
   }catch(e){
     alert('Brak dostępu do mikrofonu.'); log('BŁĄD mikrofon: '+e.message);
   }
 };
 
-$('btnStop').onclick = ()=>{
+el('btnStop').onclick = ()=>{
   if(mediaRecorder && mediaRecorder.state==='recording'){
     mediaRecorder.stop();
     mediaRecorder.stream.getTracks().forEach(t=>t.stop());
-    $('btnStart').disabled = false;
-    $('btnStop').disabled  = true;
+    el('btnStart').disabled = false;
+    el('btnStop').disabled = true;
     try{ backing.pause(); }catch(_){}
   }
 };
 
-$('btnDownload').onclick = ()=>{
+el('btnDownload').onclick = ()=>{
   if(!recordedBlob) return;
   const a=document.createElement('a'); a.href=URL.createObjectURL(recordedBlob); a.download=fileName; a.click();
 };
 
-/* ========= Odsłuch ========= */
-$('offsetMs').addEventListener('input', e=>{
+/* ========= ODSŁUCH ========= */
+el('offsetMs').addEventListener('input', e=>{
   offsetMs = parseInt(e.target.value,10)||0;
-  $('offsetVal').textContent = `${offsetMs} ms`;
+  el('offsetVal').textContent = `${offsetMs} ms`;
   if (!player.paused) resyncBackingToPlayer();
 });
-$('tempoPct').addEventListener('input', e=>{
+el('tempoPct').addEventListener('input', e=>{
   tempoPct = parseFloat(e.target.value)||0;
-  $('tempoVal').textContent = `${tempoPct.toFixed(2)}%`;
+  el('tempoVal').textContent = `${tempoPct.toFixed(2)}%`;
   backing.playbackRate = 1 + (tempoPct/100);
 });
 
-$('btnAudition').onclick = ()=>{
+el('btnAudition').onclick = ()=>{
   if (!recordedBlob || !backing.src) { alert('Brak nagrania lub podkładu.'); return; }
   resyncBackingToPlayer();
   safePlay(backing); safePlay(player);
   setAuditionButtons(true); isAuditioning = true;
   startAutoResync();
 };
-$('btnStopAud').onclick = ()=> stopAudition();
+el('btnStopAud').onclick = ()=> stopAudition();
 
 player.addEventListener('ended', ()=> stopAudition());
 backing.addEventListener('ended', ()=> stopAudition());
@@ -288,8 +280,8 @@ function stopAudition(){
   setAuditionButtons(false); isAuditioning = false;
 }
 function setAuditionButtons(running){
-  $('btnAudition').disabled = running;
-  $('btnStopAud').disabled  = !running;
+  el('btnAudition').disabled = running;
+  el('btnStopAud').disabled  = !running;
 }
 function startAutoResync(){
   stopAutoResync();
@@ -310,29 +302,37 @@ function resyncBackingToPlayer(){
   backing.currentTime = Math.max(0, target);
   backing.playbackRate = 1 + (tempoPct/100);
 }
-function safePlay(el){ el.play().catch(()=>{}); }
+function safePlay(elm){ elm.play().catch(()=>{}); }
 
-/* ========= Jeden przycisk: upload → sheets → postMessage → autoclose ========= */
-$('btnSendAll').onclick = async ()=>{
+/* ========= WYSYŁKA (manualny finał) ========= */
+el('btnSendAll').onclick = async ()=>{
   if(!recordedBlob){ alert('Najpierw nagraj.'); return; }
   try{
+    // „Czekaj…”
+    const sendBtn = el('btnSendAll');
+    sendBtn.textContent = 'Czekaj…';
+    sendBtn.classList.add('blink');
+    sendBtn.disabled = true;
+
     log('Konwersja na base64…');
     const base64 = await blobToBase64(recordedBlob);
 
     log('Wysyłanie na Drive…');
-    const up = await fetch(FN_URL, {
+    const r1 = await fetch(FN_URL, {
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ action:'upload', fileBase64: base64, mimeType, fileName })
-    }).then(r=>r.json());
+    });
+    const up = await r1.json();
     if(!up.ok) throw new Error(up.error || 'Upload failed');
 
-    $('aView').href = up.viewLink; $('aView').hidden = false;
-    $('aDl').href   = up.downloadLink; $('aDl').hidden = false;
-    $('fileIdSpan').textContent = up.fileId; $('fileIdLine').hidden = false;
+    el('aView').href = up.viewLink; el('aView').hidden = false;
+    el('aDl').href   = up.downloadLink; el('aDl').hidden = false;
+    el('fileIdSpan').textContent = up.fileId; el('fileIdLine').hidden = false;
     log(`Upload OK, fileId: ${up.fileId}`);
 
-    const meta = {
+    // meta do późniejszego „Potwierdź wysyłkę”
+    metaToSend = {
       ver: 1, ts: Date.now(),
       imie: student.imie, nazwisko: student.nazwisko, email: student.email,
       miejscowosc: student.miejscowosc, tytul: student.tytul,
@@ -341,28 +341,47 @@ $('btnSendAll').onclick = async ()=>{
     };
 
     log('Zapis do Sheets…');
-    const m = await fetch(FN_URL, {
+    const r2 = await fetch(FN_URL, {
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ action:'meta', meta })
-    }).then(r=>r.json());
+      body: JSON.stringify({ action:'meta', meta: metaToSend })
+    });
+    const m = await r2.json();
     if(!m.ok) throw new Error(m.error || 'Sheets error');
     log('Sheets: OK (wiersz '+m.row+')');
 
-    // wyślij do rodzica i zamykaj
-    try {
-      if (window.opener) {
-        window.opener.postMessage({ type:'spmUpload', payload: meta }, PARENT_ORIGIN);
-      }
-    } catch(_){}
-    // komunikat UX + autoclose / manual
-    banner(VIA==='popup' ? 'Wysłano. Okno zamknie się automatycznie…' : 'Wysłano. Zamknij tę kartę i wróć do strony SPM.');
-    tryCloseNow();
+    // pokaż przycisk „Potwierdź wysyłkę”, baner z instrukcją
+    el('btnConfirmSend').style.display = '';
+    el('btnConfirmSend').disabled = false;
+    setBanner('Wysłano. Zamknij tę kartę i wróć do strony SPM – lub kliknij „Potwierdź wysyłkę”.');
+
+    // zatrzymaj miganie na Wyślij
+    sendBtn.classList.remove('blink');
+    sendBtn.textContent = 'Wyślij';
 
   }catch(e){
+    el('btnSendAll').classList.remove('blink');
+    el('btnSendAll').textContent = 'Wyślij';
+    el('btnSendAll').disabled = false;
     log('BŁĄD: '+(e.message||e));
     alert('Nie udało się dokończyć wysyłki: '+(e.message||e));
   }
+};
+
+el('btnConfirmSend').onclick = ()=>{
+  if (!metaToSend){
+    alert('Brak danych do potwierdzenia.'); return;
+  }
+  // wyślij do SPM
+  try{
+    if (window.opener){
+      window.opener.postMessage({ type:'spmUpload', payload: metaToSend }, PARENT_ORIGIN);
+    }
+  }catch(_){}
+
+  // komunikat + próba zamknięcia
+  setBanner('Potwierdzono. Jeśli okno się nie zamknie, zamknij je ręcznie.');
+  try{ window.close(); }catch(_){}
 };
 </script>
 </body>
