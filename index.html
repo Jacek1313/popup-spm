@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>SPM — nagrywanie (podkład z pola #podkladUrl)</title>
+  <title>SPM — nagrywanie (paski postępu, podkład z #podkladUrl)</title>
   <style>
     :root { color-scheme: dark; }
     body { font-family: system-ui, Arial, sans-serif; margin: 24px; background:#111; color:#eee; }
@@ -21,8 +21,11 @@
     .note{ opacity:.85; font-size:.92rem; }
     .val{ display:inline-block; min-width:70px; text-align:right; opacity:.9; }
     .inline-controls{ display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
-    /* ukrywa natywne UI <audio> — sterujemy przyciskami globalnymi */
-    .hidden-audio { display:none; }
+    .hidden-audio { display:none; } /* chowamy natywne UI playerów */
+    .progress-row{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:10px; }
+    .progress-row label{ min-width:120px; opacity:.9; }
+    .progress-row input[type="range"]{ width: 360px; }
+    .time{ font-variant-tabular-nums: tabular-nums; opacity:.9; min-width:80px; text-align:right; }
   </style>
 </head>
 <body>
@@ -36,8 +39,17 @@
       <input id="trackVol" type="range" min="0" max="1" step="0.01" value="0.7" />
       <span id="trackVolVal" class="val">70%</span>
     </div>
+
+    <!-- PASEK POSTĘPU PODKŁADU -->
+    <div class="progress-row">
+      <label for="backingSeek">Postęp podkładu</label>
+      <input id="backingSeek" type="range" min="0" max="0" step="0.01" value="0" />
+      <span id="backingTime" class="time">0:00 / 0:00</span>
+    </div>
+
     <!-- ukryty element audio -->
     <audio id="backing" preload="auto" class="hidden-audio"></audio>
+
     <div class="note">Podkład gra w słuchawkach podczas nagrania. <b>Nie zapisuje się</b> w pliku — nagrywa się tylko mikrofon.</div>
   </div>
 
@@ -49,6 +61,14 @@
       <button id="btnStop" class="secondary" disabled>Stop</button>
       <button id="btnDownload" class="secondary" disabled>Pobierz</button>
     </div>
+
+    <!-- PASEK POSTĘPU NAGRANIA -->
+    <div class="progress-row">
+      <label for="playerSeek">Postęp nagrania</label>
+      <input id="playerSeek" type="range" min="0" max="0" step="0.01" value="0" />
+      <span id="playerTime" class="time">0:00 / 0:00</span>
+    </div>
+
     <!-- ukryty player nagrania -->
     <audio id="player" class="hidden-audio"></audio>
 
@@ -103,7 +123,11 @@ let fileName = '', mimeType = 'audio/webm';
 let lastToken = '';
 const backing = document.getElementById('backing');
 const player  = document.getElementById('player');
-let offsetMs = 0, tempoPct = 0, resyncTimer = null;
+const backingSeek = document.getElementById('backingSeek');
+const playerSeek  = document.getElementById('playerSeek');
+const backingTime = document.getElementById('backingTime');
+const playerTime  = document.getElementById('playerTime');
+let offsetMs = 0, tempoPct = 0, resyncTimer = null, rafId = null, isAuditioning = false;
 
 /* ========= UTIL ========= */
 const $ = (id)=>document.getElementById(id);
@@ -112,9 +136,10 @@ function ts(){ return new Date().toISOString().replace(/[:.]/g,'-'); }
 function sanitize(s){ return (s||'').trim().replace(/\s+/g,'_').replace(/[^\w\-\.]+/g,''); }
 function blobToBase64(blob){ return new Promise((res,rej)=>{ const fr=new FileReader(); fr.onload=()=>res(fr.result.split(',')[1]); fr.onerror=rej; fr.readAsDataURL(blob); }); }
 function parseQ(){ try{ const q=new URLSearchParams(location.search).get('q'); return q?JSON.parse(decodeURIComponent(q)) : {}; }catch(_){ return {}; } }
-// Base64 bezpieczne dla UTF-8:
 function b64u(str){ return btoa(unescape(encodeURIComponent(str))); }
 function ub64(b64){ return decodeURIComponent(escape(atob(b64))); }
+function fmt(t){ if(!isFinite(t)||t<0) t=0; const m=Math.floor(t/60), s=Math.floor(t%60); return `${m}:${String(s).padStart(2,'0')}`; }
+function clamp(v,min,max){ return Math.min(max, Math.max(min, v)); }
 
 /* ========= INICJALIZACJA (prefill) ========= */
 let student = { imie:'', nazwisko:'', email:'', miejscowosc:'', tytul:'' };
@@ -124,9 +149,46 @@ let student = { imie:'', nazwisko:'', email:'', miejscowosc:'', tytul:'' };
     imie: q.imie || '', nazwisko: q.nazwisko || '', email: q.email || '',
     miejscowosc: q.miejscowosc || '', tytul: q.tytul || ''
   };
-  // podkład — wyłącznie z q.trackUrl (czyli z #podkladUrl na stronie)
   if (q.trackUrl) { backing.src = q.trackUrl; backing.load(); log('Podkład ustawiony z WIX (#podkladUrl).'); }
 })();
+
+/* ========= PROGRESS BARY: aktualizacja i przewijanie ========= */
+function refreshProgress(){
+  // backing
+  const bd = isFinite(backing.duration) ? backing.duration : 0;
+  const bc = isFinite(backing.currentTime) ? backing.currentTime : 0;
+  backingSeek.max = bd || 0;
+  if (document.activeElement !== backingSeek) backingSeek.value = bc;
+  backingTime.textContent = `${fmt(bc)} / ${fmt(bd)}`;
+
+  // player
+  const pd = isFinite(player.duration) ? player.duration : (durationMs? durationMs/1000 : 0);
+  const pc = isFinite(player.currentTime) ? player.currentTime : 0;
+  playerSeek.max = pd || 0;
+  if (document.activeElement !== playerSeek) playerSeek.value = pc;
+  playerTime.textContent = `${fmt(pc)} / ${fmt(pd)}`;
+
+  rafId = requestAnimationFrame(refreshProgress);
+}
+rafId = requestAnimationFrame(refreshProgress);
+
+// przewijanie nagrania — master (utrzymuje sync z podkładem)
+playerSeek.addEventListener('input', ()=>{
+  const pd = isFinite(player.duration) ? player.duration : 0;
+  const t = clamp(parseFloat(playerSeek.value)||0, 0, pd||1e9);
+  player.currentTime = t;
+  if (isAuditioning) resyncBackingToPlayer();
+});
+
+// przewijanie podkładu — liczone względem offsetu; steruje playerem (żeby utrzymać sync)
+backingSeek.addEventListener('input', ()=>{
+  const bd = isFinite(backing.duration) ? backing.duration : 0;
+  const bt = clamp(parseFloat(backingSeek.value)||0, 0, bd||1e9);
+  // wylicz czas playera tak, by backing = player + offset
+  const targetPlayer = clamp(bt - offsetMs/1000, 0, (isFinite(player.duration)?player.duration:1e9));
+  player.currentTime = targetPlayer;
+  if (isAuditioning) resyncBackingToPlayer();
+});
 
 /* ========= PODKŁAD: głośność / tempo ========= */
 $('trackVol').addEventListener('input', e=>{
@@ -204,7 +266,7 @@ $('btnAudition').onclick = ()=>{
   if (!recordedBlob || !backing.src) { alert('Brak nagrania lub podkładu.'); return; }
   resyncBackingToPlayer();
   safePlay(backing); safePlay(player);
-  setAuditionButtons(true);
+  setAuditionButtons(true); isAuditioning = true;
   startAutoResync();
 };
 
@@ -219,7 +281,7 @@ function stopAudition(){
   try{ player.pause(); }catch(_){}
   try{ backing.pause(); }catch(_){}
   stopAutoResync();
-  setAuditionButtons(false);
+  setAuditionButtons(false); isAuditioning = false;
 }
 function setAuditionButtons(running){
   $('btnAudition').disabled = running;
@@ -273,8 +335,7 @@ $('btnUpload').onclick = async ()=>{
       durationMs, fileId: j.fileId, viewLink: j.viewLink, downloadLink: j.downloadLink,
       fileName, mimeType
     };
-    // UTF-8 safe Base64:
-    lastToken = 'SPM:' + b64u(JSON.stringify(meta));
+    lastToken = 'SPM:' + b64u(JSON.stringify(meta)); // UTF-8 safe
     $('sendToSpmBtn').disabled = false;
     $('copyTokenBtn').disabled = false;
   }catch(e){
