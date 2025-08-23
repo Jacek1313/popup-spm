@@ -21,7 +21,7 @@
     .note{ opacity:.85; font-size:.92rem; }
     .val{ display:inline-block; min-width:70px; text-align:right; opacity:.9; }
     .inline-controls{ display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
-    .hidden-audio { display:none; } /* chowamy natywne UI <audio> */
+    .hidden-audio { display:none; }
     .progress-row{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:10px; }
     .progress-row label{ min-width:120px; opacity:.9; }
     .progress-row input[type="range"]{ width: 360px; }
@@ -31,7 +31,6 @@
 <body>
   <h1>SPM – nagrywanie</h1>
 
-  <!-- 1) Podkład (odsłuch) -->
   <h2>Podkład (odsłuch)</h2>
   <div class="card">
     <div class="inline-controls" style="margin-top:8px">
@@ -39,21 +38,15 @@
       <input id="trackVol" type="range" min="0" max="1" step="0.01" value="0.7" />
       <span id="trackVolVal" class="val">70%</span>
     </div>
-
-    <!-- Pasek postępu podkładu -->
     <div class="progress-row">
       <label for="backingSeek">Postęp podkładu</label>
       <input id="backingSeek" type="range" min="0" max="0" step="0.01" value="0" />
       <span id="backingTime" class="time">0:00 / 0:00</span>
     </div>
-
-    <!-- ukryty element audio -->
     <audio id="backing" preload="auto" class="hidden-audio"></audio>
-
     <div class="note">Podkład gra w słuchawkach podczas nagrania. <b>Nie zapisuje się</b> w pliku — nagrywa się tylko mikrofon.</div>
   </div>
 
-  <!-- 2) Nagrywanie -->
   <h2>Nagrywanie</h2>
   <div class="card">
     <div class="inline-controls">
@@ -61,35 +54,25 @@
       <button id="btnStop" class="secondary" disabled>Stop</button>
       <button id="btnDownload" class="secondary" disabled>Pobierz</button>
     </div>
-
-    <!-- Pasek postępu nagrania -->
     <div class="progress-row">
       <label for="playerSeek">Postęp nagrania</label>
       <input id="playerSeek" type="range" min="0" max="0" step="0.01" value="0" />
       <span id="playerTime" class="time">0:00 / 0:00</span>
     </div>
-
-    <!-- ukryty player nagrania -->
     <audio id="player" class="hidden-audio"></audio>
-
-    <!-- Odsłuch po nagraniu z podkładem -->
     <div style="margin-top:14px" class="inline-controls">
       <button id="btnAudition" class="warn" disabled>Odsłuchaj (z podkładem)</button>
       <button id="btnStopAud" class="danger" disabled>Zatrzymaj odsłuch</button>
-
       <label for="offsetMs">Korekta przesunięcia</label>
       <input id="offsetMs" type="range" min="-800" max="800" step="10" value="0" />
       <span id="offsetVal" class="val">0 ms</span>
-
       <label for="tempoPct">Korekta tempa</label>
       <input id="tempoPct" type="range" min="-1" max="1" step="0.05" value="0" />
       <span id="tempoVal" class="val">0.00%</span>
     </div>
-
-    <div class="note">Jeśli czujesz „rozjazd”, użyj suwaków: <b>przesunięcie</b> (ms) i <b>tempo</b> (±1%) — działa tylko w odsłuchu.</div>
+    <div class="note">Jeśli czujesz „rozjazd”, użyj suwaków: <b>przesunięcie</b> i <b>tempo</b> — działają tylko w odsłuchu.</div>
   </div>
 
-  <!-- 3) Jedno-klikowe wysłanie -->
   <h2>Wyślij</h2>
   <div class="card">
     <button id="btnSendAll" class="warn" disabled>Wyślij</button>
@@ -100,242 +83,112 @@
     </div>
   </div>
 
-  <!-- Log -->
   <h2>Log</h2>
   <pre id="log"></pre>
 
 <script>
-/* ========= KONFIG ========= */
-const FN_URL = '/.netlify/functions/spm'; // Netlify Functions
-const PARENT_PARAM = new URLSearchParams(location.search).get('parent') || ''; // tylko do info
-// wysyłamy do rodzica bez ograniczania origin — rodzic i tak sprawdza nasz origin
-const PARENT_TARGET = '*';
+const FN_URL = '/.netlify/functions/spm';
+const PARENT_TARGET = '*'; // rodzic filtruje origin
 
-/* ========= ZMIENNE ========= */
-let mediaRecorder, chunks = [], recordedBlob = null, startedAt = 0, durationMs = 0;
-let fileName = '', mimeType = 'audio/webm';
-const backing = document.getElementById('backing');
-const player  = document.getElementById('player');
-const backingSeek = document.getElementById('backingSeek');
-const playerSeek  = document.getElementById('playerSeek');
-const backingTime = document.getElementById('backingTime');
-const playerTime  = document.getElementById('playerTime');
-let offsetMs = 0, tempoPct = 0, resyncTimer = null, rafId = null, isAuditioning = false;
+let mediaRecorder, chunks=[], recordedBlob=null, startedAt=0, durationMs=0;
+let fileName='', mimeType='audio/webm';
+const backing=document.getElementById('backing'), player=document.getElementById('player');
+const backingSeek=document.getElementById('backingSeek'), playerSeek=document.getElementById('playerSeek');
+const backingTime=document.getElementById('backingTime'), playerTime=document.getElementById('playerTime');
+let offsetMs=0, tempoPct=0, resyncTimer=null, rafId=null, isAuditioning=false;
 
-/* ========= UTIL ========= */
-const $ = (id)=>document.getElementById(id);
-function log(msg){ $('log').textContent += msg + '\n'; }
+const $ = id => document.getElementById(id);
+function log(m){ $('log').textContent += m+'\n'; }
 function ts(){ return new Date().toISOString().replace(/[:.]/g,'-'); }
 function sanitize(s){ return (s||'').trim().replace(/\s+/g,'_').replace(/[^\w\-\.]+/g,''); }
-function blobToBase64(blob){ return new Promise((res,rej)=>{ const fr=new FileReader(); fr.onload=()=>res(fr.result.split(',')[1]); fr.onerror=rej; fr.readAsDataURL(blob); }); }
-function parseQ(){ try{ const q=new URLSearchParams(location.search).get('q'); return q?JSON.parse(decodeURIComponent(q)) : {}; }catch(_){ return {}; } }
-function fmt(t){ if(!isFinite(t)||t<0) t=0; const m=Math.floor(t/60), s=Math.floor(t%60); return `${m}:${String(s).padStart(2,'0')}`; }
+function blobToBase64(b){ return new Promise((res,rej)=>{ const fr=new FileReader(); fr.onload=()=>res(fr.result.split(',')[1]); fr.onerror=rej; fr.readAsDataURL(b); }); }
+function parseQ(){ try{ const q=new URLSearchParams(location.search).get('q'); return q?JSON.parse(decodeURIComponent(q)):{} }catch(_){ return {} } }
+function fmt(t){ if(!isFinite(t)||t<0)t=0; const m=Math.floor(t/60), s=Math.floor(t%60); return `${m}:${String(s).padStart(2,'0')}`; }
 function clamp(v,min,max){ return Math.min(max, Math.max(min, v)); }
 
-/* ========= PREFILL ========= */
-let student = { imie:'', nazwisko:'', email:'', miejscowosc:'', tytul:'', trackUrl:'' };
+let student={imie:'',nazwisko:'',email:'',miejscowosc:'',tytul:'',trackUrl:''};
 (function init(){
-  const q = parseQ();
-  student = {
-    imie: q.imie || '', nazwisko: q.nazwisko || '', email: q.email || '',
-    miejscowosc: q.miejscowosc || '', tytul: q.tytul || '', trackUrl: q.trackUrl || ''
-  };
-  if (student.trackUrl) { backing.src = student.trackUrl; backing.load(); log('Podkład ustawiony z WIX (#podkladUrl).'); }
+  const q=parseQ();
+  student={ imie:q.imie||'', nazwisko:q.nazwisko||'', email:q.email||'', miejscowosc:q.miejscowosc||'', tytul:q.tytul||'', trackUrl:q.trackUrl||'' };
+  if(student.trackUrl){ backing.src=student.trackUrl; backing.load(); log('Podkład ustawiony z WIX (#podkladUrl).'); }
 })();
 
-/* ========= PROGRESS BARY ========= */
 function refreshProgress(){
-  const bd = isFinite(backing.duration) ? backing.duration : 0;
-  const bc = isFinite(backing.currentTime) ? backing.currentTime : 0;
-  backingSeek.max = bd || 0;
-  if (document.activeElement !== backingSeek) backingSeek.value = bc;
-  backingTime.textContent = `${fmt(bc)} / ${fmt(bd)}`;
-
-  const pd = isFinite(player.duration) ? player.duration : (durationMs? durationMs/1000 : 0);
-  const pc = isFinite(player.currentTime) ? player.currentTime : 0;
-  playerSeek.max = pd || 0;
-  if (document.activeElement !== playerSeek) playerSeek.value = pc;
-  playerTime.textContent = `${fmt(pc)} / ${fmt(pd)}`;
-
-  rafId = requestAnimationFrame(refreshProgress);
+  const bd=isFinite(backing.duration)?backing.duration:0, bc=isFinite(backing.currentTime)?backing.currentTime:0;
+  backingSeek.max=bd||0; if(document.activeElement!==backingSeek) backingSeek.value=bc;
+  backingTime.textContent=`${fmt(bc)} / ${fmt(bd)}`;
+  const pd=isFinite(player.duration)?player.duration:(durationMs?durationMs/1000:0), pc=isFinite(player.currentTime)?player.currentTime:0;
+  playerSeek.max=pd||0; if(document.activeElement!==playerSeek) playerSeek.value=pc;
+  playerTime.textContent=`${fmt(pc)} / ${fmt(pd)}`;
+  rafId=requestAnimationFrame(refreshProgress);
 }
-rafId = requestAnimationFrame(refreshProgress);
+rafId=requestAnimationFrame(refreshProgress);
 
-playerSeek.addEventListener('input', ()=>{
-  const pd = isFinite(player.duration) ? player.duration : 0;
-  const t = clamp(parseFloat(playerSeek.value)||0, 0, pd||1e9);
-  player.currentTime = t;
-  if (isAuditioning) resyncBackingToPlayer();
-});
-backingSeek.addEventListener('input', ()=>{
-  const bd = isFinite(backing.duration) ? backing.duration : 0;
-  const bt = clamp(parseFloat(backingSeek.value)||0, 0, bd||1e9);
-  const targetPlayer = clamp(bt - offsetMs/1000, 0, (isFinite(player.duration)?player.duration:1e9));
-  player.currentTime = targetPlayer;
-  if (isAuditioning) resyncBackingToPlayer();
-});
+playerSeek.addEventListener('input', ()=>{ const pd=isFinite(player.duration)?player.duration:0; const t=clamp(parseFloat(playerSeek.value)||0,0,pd||1e9); player.currentTime=t; });
+backingSeek.addEventListener('input', ()=>{ const bd=isFinite(backing.duration)?backing.duration:0; const bt=clamp(parseFloat(backingSeek.value)||0,0,bd||1e9); const tp=clamp(bt - offsetMs/1000, 0, (isFinite(player.duration)?player.duration:1e9)); player.currentTime=tp; });
 
-/* ========= PODKŁAD ========= */
-$('trackVol').addEventListener('input', e=>{
-  const v = parseFloat(e.target.value||'0.7'); backing.volume = v; $('trackVolVal').textContent = Math.round(v*100)+'%';
-});
-backing.volume = parseFloat($('trackVol').value||'0.7');
-backing.preservesPitch = true; backing.mozPreservesPitch = true; backing.webkitPreservesPitch = true;
+$('trackVol').addEventListener('input', e=>{ const v=parseFloat(e.target.value||'0.7'); backing.volume=v; $('trackVolVal').textContent=Math.round(v*100)+'%'; });
+backing.volume=parseFloat($('trackVol').value||'0.7'); backing.preservesPitch = backing.mozPreservesPitch = backing.webkitPreservesPitch = true;
 
-/* ========= NAGRYWANIE ========= */
-$('btnStart').onclick = async ()=>{
+$('btnStart').onclick=async()=>{
   try{
-    const micStream = await navigator.mediaDevices.getUserMedia({audio:true});
-    chunks = []; recordedBlob = null; durationMs = 0; startedAt = Date.now();
-
-    mediaRecorder = new MediaRecorder(micStream, {mimeType});
-    mediaRecorder.ondataavailable = e => { if(e.data && e.data.size) chunks.push(e.data); };
-    mediaRecorder.onstop = ()=>{
-      durationMs = Date.now() - startedAt;
-      recordedBlob = new Blob(chunks, {type:mimeType});
-      player.src = URL.createObjectURL(recordedBlob);
-
-      const i = sanitize(student.imie), n = sanitize(student.nazwisko), t = sanitize(student.tytul);
-      fileName = `SPM-${ts()}-${i||'imie'}-${n||'nazw'}-${t||'tytul'}.webm`;
-
-      $('btnDownload').disabled = false;
-      $('btnSendAll').disabled  = false;
-      $('btnAudition').disabled = false;
-      $('btnStopAud').disabled  = true;
-
+    const mic=await navigator.mediaDevices.getUserMedia({audio:true});
+    chunks=[]; recordedBlob=null; durationMs=0; startedAt=Date.now();
+    mediaRecorder=new MediaRecorder(mic,{mimeType});
+    mediaRecorder.ondataavailable=e=>{ if(e.data&&e.data.size) chunks.push(e.data); };
+    mediaRecorder.onstop=()=>{
+      durationMs=Date.now()-startedAt;
+      recordedBlob=new Blob(chunks,{type:mimeType});
+      player.src=URL.createObjectURL(recordedBlob);
+      const i=sanitize(student.imie), n=sanitize(student.nazwisko), t=sanitize(student.tytul);
+      fileName=`SPM-${ts()}-${i||'imie'}-${n||'nazw'}-${t||'tytul'}.webm`;
+      $('btnDownload').disabled=false; $('btnSendAll').disabled=false; $('btnAudition').disabled=false; $('btnStopAud').disabled=true;
       log(`Nagranie gotowe. Czas ~ ${durationMs} ms; rozmiar ~ ${Math.round(recordedBlob.size/1024)} KB`);
     };
-
-    try { if (backing.src) { backing.currentTime = 0; await backing.play(); } } catch(e) { log('Uwaga: podkład nie wystartował ('+e.message+').'); }
-    mediaRecorder.start();
-
-    $('btnStart').disabled = true;
-    $('btnStop').disabled = false;
-    log('Nagrywanie… (podkład tylko w słuchawkach)');
-  }catch(e){
-    alert('Brak dostępu do mikrofonu.'); log('BŁĄD mikrofon: '+e.message);
-  }
+    try{ if(backing.src){ backing.currentTime=0; await backing.play(); } }catch(e){ log('Uwaga: podkład nie wystartował ('+e.message+').'); }
+    mediaRecorder.start(); $('btnStart').disabled=true; $('btnStop').disabled=false; log('Nagrywanie… (podkład tylko w słuchawkach)');
+  }catch(e){ alert('Brak dostępu do mikrofonu.'); log('BŁĄD mikrofon: '+e.message); }
 };
+$('btnStop').onclick=()=>{ if(mediaRecorder&&mediaRecorder.state==='recording'){ mediaRecorder.stop(); mediaRecorder.stream.getTracks().forEach(t=>t.stop()); $('btnStart').disabled=false; $('btnStop').disabled=true; try{backing.pause()}catch(_){}}; };
+$('btnDownload').onclick=()=>{ if(!recordedBlob)return; const a=document.createElement('a'); a.href=URL.createObjectURL(recordedBlob); a.download=fileName; a.click(); };
 
-$('btnStop').onclick = ()=>{
-  if(mediaRecorder && mediaRecorder.state==='recording'){
-    mediaRecorder.stop();
-    mediaRecorder.stream.getTracks().forEach(t=>t.stop());
-    $('btnStart').disabled = false;
-    $('btnStop').disabled = true;
-    try{ backing.pause(); }catch(_){}
-  }
-};
+$('offsetMs').addEventListener('input', e=>{ offsetMs=parseInt(e.target.value,10)||0; $('offsetVal').textContent=`${offsetMs} ms`; });
+$('tempoPct').addEventListener('input', e=>{ tempoPct=parseFloat(e.target.value)||0; $('tempoVal').textContent=`${tempoPct.toFixed(2)}%`; backing.playbackRate=1+(tempoPct/100); });
 
-$('btnDownload').onclick = ()=>{
-  if(!recordedBlob) return;
-  const a=document.createElement('a'); a.href=URL.createObjectURL(recordedBlob); a.download=fileName; a.click();
-};
+$('btnAudition').onclick=()=>{ if(!recordedBlob||!backing.src){ alert('Brak nagrania lub podkładu.'); return; } backing.currentTime=player.currentTime+offsetMs/1000; backing.playbackRate=1+(tempoPct/100); backing.play().catch(()=>{}); player.play().catch(()=>{}); $('btnAudition').disabled=true; $('btnStopAud').disabled=false; isAuditioning=true; };
+$('btnStopAud').onclick=()=>{ try{player.pause()}catch(_){ } try{backing.pause()}catch(_){ } $('btnAudition').disabled=false; $('btnStopAud').disabled=true; isAuditioning=false; };
+player.addEventListener('ended', ()=>$('btnStopAud').click());
+backing.addEventListener('ended', ()=>$('btnStopAud').click());
 
-/* ========= ODSŁUCH ========= */
-$('offsetMs').addEventListener('input', e=>{
-  offsetMs = parseInt(e.target.value,10)||0;
-  $('offsetVal').textContent = `${offsetMs} ms`;
-  if (!player.paused) resyncBackingToPlayer();
-});
-$('tempoPct').addEventListener('input', e=>{
-  tempoPct = parseFloat(e.target.value)||0;
-  $('tempoVal').textContent = `${tempoPct.toFixed(2)}%`;
-  backing.playbackRate = 1 + (tempoPct/100);
-});
-
-$('btnAudition').onclick = ()=>{
-  if (!recordedBlob || !backing.src) { alert('Brak nagrania lub podkładu.'); return; }
-  resyncBackingToPlayer();
-  safePlay(backing); safePlay(player);
-  setAuditionButtons(true); isAuditioning = true;
-  startAutoResync();
-};
-$('btnStopAud').onclick = ()=> stopAudition();
-
-player.addEventListener('ended', ()=> stopAudition());
-backing.addEventListener('ended', ()=> stopAudition());
-player.addEventListener('pause', ()=> { if (!backing.paused) backing.pause(); stopAutoResync(); });
-
-function stopAudition(){
-  try{ player.pause(); }catch(_){}
-  try{ backing.pause(); }catch(_){}
-  stopAutoResync();
-  setAuditionButtons(false); isAuditioning = false;
-}
-function setAuditionButtons(running){
-  $('btnAudition').disabled = running;
-  $('btnStopAud').disabled  = !running;
-}
-function startAutoResync(){
-  stopAutoResync();
-  resyncTimer = setInterval(()=>{
-    const pd = isFinite(player.duration) ? player.duration : 0;
-    const bd = isFinite(backing.duration) ? backing.duration : 0;
-    if ((pd && player.currentTime >= pd - 0.05) || (bd && backing.currentTime >= bd - 0.05)) {
-      stopAudition(); return;
-    }
-    const target = player.currentTime + offsetMs/1000;
-    const diff = Math.abs((backing.currentTime||0) - target);
-    if (diff > 0.12) backing.currentTime = Math.max(0, target);
-  }, 400);
-}
-function stopAutoResync(){ if (resyncTimer){ clearInterval(resyncTimer); resyncTimer=null; } }
-function resyncBackingToPlayer(){
-  const target = player.currentTime + offsetMs/1000;
-  backing.currentTime = Math.max(0, target);
-  backing.playbackRate = 1 + (tempoPct/100);
-}
-function safePlay(el){ el.play().catch(()=>{}); }
-
-/* ========= JEDEN PRZYCISK: upload → sheets → postMessage ========= */
-$('btnSendAll').onclick = async ()=>{
+$('btnSendAll').onclick=async()=>{
   if(!recordedBlob){ alert('Najpierw nagraj.'); return; }
   try{
     log('Konwersja na base64…');
-    const base64 = await blobToBase64(recordedBlob);
+    const base64=await blobToBase64(recordedBlob);
 
     log('Wysyłanie na Drive…');
-    const r1 = await fetch(FN_URL, {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ action:'upload', fileBase64: base64, mimeType, fileName })
-    });
-    const up = await r1.json();
-    if(!up.ok) throw new Error(up.error || 'Upload failed');
-
-    $('aView').href = up.viewLink; $('aView').hidden = false;
-    $('aDl').href   = up.downloadLink; $('aDl').hidden = false;
-    $('fileIdSpan').textContent = up.fileId; $('fileIdLine').hidden = false;
+    const up = await fetch(FN_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'upload',fileBase64:base64,mimeType,fileName})}).then(r=>r.json());
+    if(!up.ok) throw new Error(up.error||'Upload failed');
+    $('aView').href=up.viewLink; $('aView').hidden=false;
+    $('aDl').href=up.downloadLink; $('aDl').hidden=false;
+    $('fileIdSpan').textContent=up.fileId; $('fileIdLine').hidden=false;
     log(`Upload OK, fileId: ${up.fileId}`);
 
-    const meta = {
-      ver: 1, ts: Date.now(),
-      imie: student.imie, nazwisko: student.nazwisko, email: student.email,
-      miejscowosc: student.miejscowosc, tytul: student.tytul,
-      durationMs, fileId: up.fileId, viewLink: up.viewLink, downloadLink: up.downloadLink,
-      fileName, mimeType
-    };
-
+    const meta={ver:1,ts:Date.now(),imie:student.imie,nazwisko:student.nazwisko,email:student.email,miejscowosc:student.miejscowosc,tytul:student.tytul,durationMs,fileId:up.fileId,viewLink:up.viewLink,downloadLink:up.downloadLink,fileName,mimeType};
     log('Zapis do Sheets…');
-    const r2 = await fetch(FN_URL, {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ action:'meta', meta })
-    });
-    const m = await r2.json();
-    if(!m.ok) throw new Error(m.error || 'Sheets error');
+    const m = await fetch(FN_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'meta',meta})}).then(r=>r.json());
+    if(!m.ok) throw new Error(m.error||'Sheets error');
     log('Sheets: OK (wiersz '+m.row+')');
 
-    // wyślij do SPM (rodzic sam zamknie okno)
-    if (window.opener) {
-      window.opener.postMessage({ type:'spmUpload', payload: meta }, PARENT_TARGET);
-    }
+    // 1) postMessage do rodzica
+    try{ if(window.opener){ window.opener.postMessage({type:'spmUpload',payload:meta}, PARENT_TARGET); } }catch(_){}
 
-    // informacyjna nakładka (popup nie zamyka się sam!)
-    document.body.insertAdjacentHTML('beforeend',
-      '<div style="position:fixed;inset:0;background:#0008;display:grid;place-items:center;' +
-      'font:600 16px system-ui">Wysłano. Okno zamknie się automatycznie…</div>');
+    // 2) nakładka info
+    document.body.insertAdjacentHTML('beforeend','<div id="sentOverlay" style="position:fixed;inset:0;background:#0008;display:grid;place-items:center;font:600 16px system-ui">Wysłano. Okno zamknie się automatycznie…</div>');
+
+    // 3) samodomknięcie (gdy dozwolone)
+    try{ window.close(); }catch(_){}
+    setTimeout(()=>{ try{ window.open('','_self'); window.close(); }catch(_){ } }, 300);
 
   }catch(e){
     log('BŁĄD: '+(e.message||e));
