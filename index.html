@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>SPM – nagrywanie</title>
+  <title>SPM – Studio nagrań</title>
   <style>
     :root { color-scheme: dark; }
     body { font-family: system-ui, Arial, sans-serif; margin: 24px; background:#111; color:#eee; }
@@ -21,18 +21,16 @@
     .note{ opacity:.85; font-size:.92rem; }
     .val{ display:inline-block; min-width:70px; text-align:right; opacity:.9; }
     .inline-controls{ display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
-    .hidden-audio { display:none; }
+    .hidden-audio { display:none; } /* chowamy natywne UI <audio> */
     .progress-row{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:10px; }
     .progress-row label{ min-width:120px; opacity:.9; }
     .progress-row input[type="range"]{ width: 360px; }
     .time{ font-variant-tabular-nums: tabular-nums; opacity:.9; min-width:80px; text-align:right; }
 
-    /* baner u góry */
+    /* baner-informacja */
     #banner {
-      position: sticky; top: -8px; z-index: 5;
-      background: #0b0b0b; border:1px solid #333; padding:10px 12px;
-      border-radius:10px; margin-bottom:14px; text-align:center;
-      color:#eaeaea;
+      border:1px solid #333; padding:10px 12px; border-radius:10px;
+      margin-bottom:14px; text-align:center; color:#eaeaea; background:#0b0b0b;
     }
     /* „Czekaj…” – miganie */
     @keyframes blink { 50% { opacity:.35 } }
@@ -42,7 +40,7 @@
 <body>
   <div id="banner"></div>
 
-  <h1>SPM – nagrywanie</h1>
+  <h1>SPM – Studio nagrań</h1>
 
   <!-- 1) Podkład (odsłuch) -->
   <h2>Podkład (odsłuch)</h2>
@@ -102,6 +100,7 @@
     <div class="inline-controls">
       <button id="btnSendAll" class="warn" disabled>Wyślij</button>
       <button id="btnConfirmSend" class="secondary" style="display:none">Potwierdź wysyłkę</button>
+      <a id="aReturn" class="inline" href="#" style="display:none">↩️ Wróć do SPM i potwierdź</a>
     </div>
     <div style="margin-top:10px">
       <a id="aView" class="inline" href="#" target="_blank" rel="noopener" hidden>🔎 Podgląd (Drive)</a>
@@ -117,28 +116,29 @@
 <script>
 /* ========= KONFIG ========= */
 const FN_URL = '/.netlify/functions/spm';
-const PARENT_PARAM = new URLSearchParams(location.search).get('parent') || '';
-let PARENT_ORIGIN = '*';
-try { PARENT_ORIGIN = new URL(PARENT_PARAM).origin || '*'; } catch(_) {}
+const qs            = new URLSearchParams(location.search);
+const parentUrlRaw  = qs.get('parent') || '';
+const PARENT_ORIGIN = parentUrlRaw ? new URL(parentUrlRaw).origin : '*';
+const PARENT_URL    = parentUrlRaw || ''; // do linku „Wróć do SPM…”
 
 /* ========= STAN ========= */
 let mediaRecorder, chunks = [], recordedBlob = null, startedAt = 0, durationMs = 0;
 let fileName = '', mimeType = 'audio/webm';
-let metaToSend = null;   // <- meta do wysłania po „Potwierdź wysyłkę”
+let metaToSend = null;   // <- meta do "Potwierdź wysyłkę"
 
-const el = id => document.getElementById(id);
-const backing = el('backing');
-const player  = el('player');
-const backingSeek = el('backingSeek');
-const playerSeek  = el('playerSeek');
-const backingTime = el('backingTime');
-const playerTime  = el('playerTime');
-const banner = el('banner');
+const $ = id => document.getElementById(id);
+const backing = $('backing');
+const player  = $('player');
+const backingSeek = $('backingSeek');
+const playerSeek  = $('playerSeek');
+const backingTime = $('backingTime');
+const playerTime  = $('playerTime');
+const banner = $('banner');
 
 let offsetMs = 0, tempoPct = 0, resyncTimer = null, rafId = null, isAuditioning = false;
 
 /* ========= UTIL ========= */
-function log(m){ el('log').textContent += m + '\n'; }
+function log(m){ $('log').textContent += m + '\n'; }
 function ts(){ return new Date().toISOString().replace(/[:.]/g,'-'); }
 function sanitize(s){ return (s||'').trim().replace(/\s+/g,'_').replace(/[^\w\-\.]+/g,''); }
 function blobToBase64(blob){ return new Promise((res,rej)=>{ const fr=new FileReader(); fr.onload=()=>res(fr.result.split(',')[1]); fr.onerror=rej; fr.readAsDataURL(blob); }); }
@@ -155,7 +155,7 @@ let student = { imie:'', nazwisko:'', email:'', miejscowosc:'', tytul:'', trackU
     imie: q.imie || '', nazwisko: q.nazwisko || '', email: q.email || '',
     miejscowosc: q.miejscowosc || '', tytul: q.tytul || '', trackUrl: q.trackUrl || ''
   };
-  if (student.trackUrl) { backing.src = student.trackUrl; backing.load(); log('Podkład ustawiony z WIX (#podkladUrl).'); }
+  if (student.trackUrl) { backing.src = student.trackUrl; backing.load(); log('Podkład ustawiony (z SPM).'); }
   setBanner('');
 })();
 
@@ -192,14 +192,14 @@ backingSeek.addEventListener('input', ()=>{
 });
 
 /* ========= PODKŁAD ========= */
-el('trackVol').addEventListener('input', e=>{
-  const v = parseFloat(e.target.value||'0.7'); backing.volume = v; el('trackVolVal').textContent = Math.round(v*100)+'%';
+$('trackVol').addEventListener('input', e=>{
+  const v = parseFloat(e.target.value||'0.7'); backing.volume = v; $('trackVolVal').textContent = Math.round(v*100)+'%';
 });
-backing.volume = parseFloat(el('trackVol').value||'0.7');
+backing.volume = parseFloat($('trackVol').value||'0.7');
 backing.preservesPitch = true; backing.mozPreservesPitch = true; backing.webkitPreservesPitch = true;
 
 /* ========= NAGRYWANIE ========= */
-el('btnStart').onclick = async ()=>{
+$('btnStart').onclick = async ()=>{
   try{
     const micStream = await navigator.mediaDevices.getUserMedia({audio:true});
     chunks = []; recordedBlob = null; durationMs = 0; startedAt = Date.now();
@@ -214,10 +214,10 @@ el('btnStart').onclick = async ()=>{
       const i = sanitize(student.imie), n = sanitize(student.nazwisko), t = sanitize(student.tytul);
       fileName = `SPM-${ts()}-${i||'imie'}-${n||'nazw'}-${t||'tytul'}.webm`;
 
-      el('btnDownload').disabled = false;
-      el('btnSendAll').disabled  = false;
-      el('btnAudition').disabled = false;
-      el('btnStopAud').disabled  = true;
+      $('btnDownload').disabled = false;
+      $('btnSendAll').disabled  = false;
+      $('btnAudition').disabled = false;
+      $('btnStopAud').disabled  = true;
 
       log(`Nagranie gotowe. Czas ~ ${durationMs} ms; rozmiar ~ ${Math.round(recordedBlob.size/1024)} KB`);
     };
@@ -225,49 +225,49 @@ el('btnStart').onclick = async ()=>{
     try { if (backing.src) { backing.currentTime = 0; await backing.play(); } } catch(e) { log('Uwaga: podkład nie wystartował ('+e.message+').'); }
     mediaRecorder.start();
 
-    el('btnStart').disabled = true;
-    el('btnStop').disabled = false;
+    $('btnStart').disabled = true;
+    $('btnStop').disabled = false;
     log('Nagrywanie… (podkład tylko w słuchawkach)');
   }catch(e){
     alert('Brak dostępu do mikrofonu.'); log('BŁĄD mikrofon: '+e.message);
   }
 };
 
-el('btnStop').onclick = ()=>{
+$('btnStop').onclick = ()=>{
   if(mediaRecorder && mediaRecorder.state==='recording'){
     mediaRecorder.stop();
     mediaRecorder.stream.getTracks().forEach(t=>t.stop());
-    el('btnStart').disabled = false;
-    el('btnStop').disabled = true;
+    $('btnStart').disabled = false;
+    $('btnStop').disabled = true;
     try{ backing.pause(); }catch(_){}
   }
 };
 
-el('btnDownload').onclick = ()=>{
+$('btnDownload').onclick = ()=>{
   if(!recordedBlob) return;
   const a=document.createElement('a'); a.href=URL.createObjectURL(recordedBlob); a.download=fileName; a.click();
 };
 
 /* ========= ODSŁUCH ========= */
-el('offsetMs').addEventListener('input', e=>{
+$('offsetMs').addEventListener('input', e=>{
   offsetMs = parseInt(e.target.value,10)||0;
-  el('offsetVal').textContent = `${offsetMs} ms`;
+  $('offsetVal').textContent = `${offsetMs} ms`;
   if (!player.paused) resyncBackingToPlayer();
 });
-el('tempoPct').addEventListener('input', e=>{
+$('tempoPct').addEventListener('input', e=>{
   tempoPct = parseFloat(e.target.value)||0;
-  el('tempoVal').textContent = `${tempoPct.toFixed(2)}%`;
+  $('tempoVal').textContent = `${tempoPct.toFixed(2)}%`;
   backing.playbackRate = 1 + (tempoPct/100);
 });
 
-el('btnAudition').onclick = ()=>{
+$('btnAudition').onclick = ()=>{
   if (!recordedBlob || !backing.src) { alert('Brak nagrania lub podkładu.'); return; }
   resyncBackingToPlayer();
   safePlay(backing); safePlay(player);
   setAuditionButtons(true); isAuditioning = true;
   startAutoResync();
 };
-el('btnStopAud').onclick = ()=> stopAudition();
+$('btnStopAud').onclick = ()=> stopAudition();
 
 player.addEventListener('ended', ()=> stopAudition());
 backing.addEventListener('ended', ()=> stopAudition());
@@ -280,8 +280,8 @@ function stopAudition(){
   setAuditionButtons(false); isAuditioning = false;
 }
 function setAuditionButtons(running){
-  el('btnAudition').disabled = running;
-  el('btnStopAud').disabled  = !running;
+  $('btnAudition').disabled = running;
+  $('btnStopAud').disabled  = !running;
 }
 function startAutoResync(){
   stopAutoResync();
@@ -304,12 +304,12 @@ function resyncBackingToPlayer(){
 }
 function safePlay(elm){ elm.play().catch(()=>{}); }
 
-/* ========= WYSYŁKA (manualny finał) ========= */
-el('btnSendAll').onclick = async ()=>{
+/* ========= WYSYŁKA ========= */
+$('btnSendAll').onclick = async ()=>{
   if(!recordedBlob){ alert('Najpierw nagraj.'); return; }
   try{
-    // „Czekaj…”
-    const sendBtn = el('btnSendAll');
+    // „Czekaj…” (miganie)
+    const sendBtn = $('btnSendAll');
     sendBtn.textContent = 'Czekaj…';
     sendBtn.classList.add('blink');
     sendBtn.disabled = true;
@@ -318,20 +318,18 @@ el('btnSendAll').onclick = async ()=>{
     const base64 = await blobToBase64(recordedBlob);
 
     log('Wysyłanie na Drive…');
-    const r1 = await fetch(FN_URL, {
+    const up = await fetch(FN_URL, {
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ action:'upload', fileBase64: base64, mimeType, fileName })
-    });
-    const up = await r1.json();
+    }).then(r=>r.json());
     if(!up.ok) throw new Error(up.error || 'Upload failed');
 
-    el('aView').href = up.viewLink; el('aView').hidden = false;
-    el('aDl').href   = up.downloadLink; el('aDl').hidden = false;
-    el('fileIdSpan').textContent = up.fileId; el('fileIdLine').hidden = false;
+    $('aView').href = up.viewLink; $('aView').hidden = false;
+    $('aDl').href   = up.downloadLink; $('aDl').hidden = false;
+    $('fileIdSpan').textContent = up.fileId; $('fileIdLine').hidden = false;
     log(`Upload OK, fileId: ${up.fileId}`);
 
-    // meta do późniejszego „Potwierdź wysyłkę”
     metaToSend = {
       ver: 1, ts: Date.now(),
       imie: student.imie, nazwisko: student.nazwisko, email: student.email,
@@ -341,47 +339,50 @@ el('btnSendAll').onclick = async ()=>{
     };
 
     log('Zapis do Sheets…');
-    const r2 = await fetch(FN_URL, {
+    const m = await fetch(FN_URL, {
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ action:'meta', meta: metaToSend })
-    });
-    const m = await r2.json();
+    }).then(r=>r.json());
     if(!m.ok) throw new Error(m.error || 'Sheets error');
     log('Sheets: OK (wiersz '+m.row+')');
 
-    // pokaż przycisk „Potwierdź wysyłkę”, baner z instrukcją
-    el('btnConfirmSend').style.display = '';
-    el('btnConfirmSend').disabled = false;
-    setBanner('Wysłano. Zamknij tę kartę i wróć do strony SPM – lub kliknij „Potwierdź wysyłkę”.');
+    // Pokazujemy "Potwierdź wysyłkę" i link "Wróć do SPM i potwierdź"
+    $('btnConfirmSend').style.display = '';
+    $('btnConfirmSend').disabled = false;
 
-    // zatrzymaj miganie na Wyślij
+    if (PARENT_URL) {
+      const spmParam = encodeURIComponent(JSON.stringify(metaToSend));
+      $('aReturn').href = PARENT_URL + (PARENT_URL.includes('?') ? '&' : '?') + 'spm=' + spmParam;
+      $('aReturn').style.display = '';
+    }
+
+    // Czytelny komunikat
+    setBanner('Wysłano. Kliknij „Potwierdź wysyłkę”, a potem wróć do SPM i kliknij „Zapisz”.\n' +
+              'Możesz też użyć linku „Wróć do SPM i potwierdź”.');
+
+    // Zatrzymaj miganie na "Wyślij"
     sendBtn.classList.remove('blink');
     sendBtn.textContent = 'Wyślij';
 
   }catch(e){
-    el('btnSendAll').classList.remove('blink');
-    el('btnSendAll').textContent = 'Wyślij';
-    el('btnSendAll').disabled = false;
+    $('btnSendAll').classList.remove('blink');
+    $('btnSendAll').textContent = 'Wyślij';
+    $('btnSendAll').disabled = false;
     log('BŁĄD: '+(e.message||e));
     alert('Nie udało się dokończyć wysyłki: '+(e.message||e));
   }
 };
 
-el('btnConfirmSend').onclick = ()=>{
-  if (!metaToSend){
-    alert('Brak danych do potwierdzenia.'); return;
-  }
-  // wyślij do SPM
+// 1) „Potwierdź wysyłkę” -> WYŁĄCZNIE postMessage do SPM (bez prób zamykania)
+$('btnConfirmSend').onclick = ()=>{
+  if (!metaToSend){ alert('Brak danych do potwierdzenia.'); return; }
   try{
-    if (window.opener){
+    if (window.opener) {
       window.opener.postMessage({ type:'spmUpload', payload: metaToSend }, PARENT_ORIGIN);
     }
   }catch(_){}
-
-  // komunikat + próba zamknięcia
-  setBanner('Potwierdzono. Jeśli okno się nie zamknie, zamknij je ręcznie.');
-  try{ window.close(); }catch(_){}
+  setBanner('Potwierdzono. Wróć do SPM i kliknij „Zapisz”.');
 };
 </script>
 </body>
