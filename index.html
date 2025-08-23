@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>SPM — nagrywanie (paski postępu, podkład z #podkladUrl)</title>
+  <title>SPM — nagrywanie (1 przycisk „Wyślij”)</title>
   <style>
     :root { color-scheme: dark; }
     body { font-family: system-ui, Arial, sans-serif; margin: 24px; background:#111; color:#eee; }
@@ -21,7 +21,7 @@
     .note{ opacity:.85; font-size:.92rem; }
     .val{ display:inline-block; min-width:70px; text-align:right; opacity:.9; }
     .inline-controls{ display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
-    .hidden-audio { display:none; } /* chowamy natywne UI playerów */
+    .hidden-audio { display:none; } /* chowamy natywne UI <audio> */
     .progress-row{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:10px; }
     .progress-row label{ min-width:120px; opacity:.9; }
     .progress-row input[type="range"]{ width: 360px; }
@@ -89,10 +89,10 @@
     <div class="note">Jeśli czujesz „rozjazd”, użyj suwaków: <b>przesunięcie</b> (ms) i <b>tempo</b> (±1%) — działa tylko w odsłuchu.</div>
   </div>
 
-  <!-- 3) Wysyłka na Drive -->
-  <h2>Wysyłka na Drive</h2>
+  <!-- 3) Jedno-klikowe wysłanie -->
+  <h2>Wyślij</h2>
   <div class="card">
-    <button id="btnUpload" class="warn" disabled>Wyślij na Drive</button>
+    <button id="btnSendAll" class="warn" disabled>Wyślij</button>
     <div style="margin-top:10px">
       <a id="aView" class="inline" href="#" target="_blank" rel="noopener" hidden>🔎 Podgląd (Drive)</a>
       <a id="aDl" class="inline" href="#" target="_blank" rel="noopener" hidden>⬇️ Pobierz (direct)</a>
@@ -100,27 +100,20 @@
     </div>
   </div>
 
-  <!-- 4) Przekazanie do SPM -->
-  <h2>Przekazanie do SPM</h2>
-  <div class="card">
-    <button id="sendToSpmBtn" disabled>Wyślij do SPM i zamknij</button>
-    <button id="copyTokenBtn" class="secondary" disabled>Kopiuj token (awaryjnie)</button>
-    <div class="note">„Wyślij do SPM” zapisze także metadane do Google Sheets.</div>
-  </div>
-
   <!-- Log -->
   <h2>Log</h2>
   <pre id="log"></pre>
 
 <script>
-/* ========= USTAWIENIA ========= */
+/* ========= KONFIG ========= */
 const FN_URL = '/.netlify/functions/spm';
-const PARENT_ORIGIN = new URLSearchParams(location.search).get('parent') || '*';
+const PARENT_PARAM = new URLSearchParams(location.search).get('parent') || '';
+let PARENT_ORIGIN = '*';
+try { PARENT_ORIGIN = new URL(PARENT_PARAM).origin || '*'; } catch(_) {}
 
 /* ========= ZMIENNE ========= */
 let mediaRecorder, chunks = [], recordedBlob = null, startedAt = 0, durationMs = 0;
 let fileName = '', mimeType = 'audio/webm';
-let lastToken = '';
 const backing = document.getElementById('backing');
 const player  = document.getElementById('player');
 const backingSeek = document.getElementById('backingSeek');
@@ -136,12 +129,13 @@ function ts(){ return new Date().toISOString().replace(/[:.]/g,'-'); }
 function sanitize(s){ return (s||'').trim().replace(/\s+/g,'_').replace(/[^\w\-\.]+/g,''); }
 function blobToBase64(blob){ return new Promise((res,rej)=>{ const fr=new FileReader(); fr.onload=()=>res(fr.result.split(',')[1]); fr.onerror=rej; fr.readAsDataURL(blob); }); }
 function parseQ(){ try{ const q=new URLSearchParams(location.search).get('q'); return q?JSON.parse(decodeURIComponent(q)) : {}; }catch(_){ return {}; } }
+// Base64 bezpieczne dla UTF-8:
 function b64u(str){ return btoa(unescape(encodeURIComponent(str))); }
 function ub64(b64){ return decodeURIComponent(escape(atob(b64))); }
 function fmt(t){ if(!isFinite(t)||t<0) t=0; const m=Math.floor(t/60), s=Math.floor(t%60); return `${m}:${String(s).padStart(2,'0')}`; }
 function clamp(v,min,max){ return Math.min(max, Math.max(min, v)); }
 
-/* ========= INICJALIZACJA (prefill) ========= */
+/* ========= PREFILL ========= */
 let student = { imie:'', nazwisko:'', email:'', miejscowosc:'', tytul:'' };
 (function init(){
   const q = parseQ();
@@ -152,16 +146,14 @@ let student = { imie:'', nazwisko:'', email:'', miejscowosc:'', tytul:'' };
   if (q.trackUrl) { backing.src = q.trackUrl; backing.load(); log('Podkład ustawiony z WIX (#podkladUrl).'); }
 })();
 
-/* ========= PROGRESS BARY: aktualizacja i przewijanie ========= */
+/* ========= PROGRESS BARY ========= */
 function refreshProgress(){
-  // backing
   const bd = isFinite(backing.duration) ? backing.duration : 0;
   const bc = isFinite(backing.currentTime) ? backing.currentTime : 0;
   backingSeek.max = bd || 0;
   if (document.activeElement !== backingSeek) backingSeek.value = bc;
   backingTime.textContent = `${fmt(bc)} / ${fmt(bd)}`;
 
-  // player
   const pd = isFinite(player.duration) ? player.duration : (durationMs? durationMs/1000 : 0);
   const pc = isFinite(player.currentTime) ? player.currentTime : 0;
   playerSeek.max = pd || 0;
@@ -172,25 +164,21 @@ function refreshProgress(){
 }
 rafId = requestAnimationFrame(refreshProgress);
 
-// przewijanie nagrania — master (utrzymuje sync z podkładem)
 playerSeek.addEventListener('input', ()=>{
   const pd = isFinite(player.duration) ? player.duration : 0;
   const t = clamp(parseFloat(playerSeek.value)||0, 0, pd||1e9);
   player.currentTime = t;
   if (isAuditioning) resyncBackingToPlayer();
 });
-
-// przewijanie podkładu — liczone względem offsetu; steruje playerem (żeby utrzymać sync)
 backingSeek.addEventListener('input', ()=>{
   const bd = isFinite(backing.duration) ? backing.duration : 0;
   const bt = clamp(parseFloat(backingSeek.value)||0, 0, bd||1e9);
-  // wylicz czas playera tak, by backing = player + offset
   const targetPlayer = clamp(bt - offsetMs/1000, 0, (isFinite(player.duration)?player.duration:1e9));
   player.currentTime = targetPlayer;
   if (isAuditioning) resyncBackingToPlayer();
 });
 
-/* ========= PODKŁAD: głośność / tempo ========= */
+/* ========= PODKŁAD ========= */
 $('trackVol').addEventListener('input', e=>{
   const v = parseFloat(e.target.value||'0.7'); backing.volume = v; $('trackVolVal').textContent = Math.round(v*100)+'%';
 });
@@ -214,16 +202,13 @@ $('btnStart').onclick = async ()=>{
       fileName = `SPM-${ts()}-${i||'imie'}-${n||'nazw'}-${t||'tytul'}.webm`;
 
       $('btnDownload').disabled = false;
-      $('btnUpload').disabled   = false;
+      $('btnSendAll').disabled  = false;
       $('btnAudition').disabled = false;
       $('btnStopAud').disabled  = true;
-      $('sendToSpmBtn').disabled = true;
-      $('copyTokenBtn').disabled = true;
 
       log(`Nagranie gotowe. Czas ~ ${durationMs} ms; rozmiar ~ ${Math.round(recordedBlob.size/1024)} KB`);
     };
 
-    // start: najpierw podkład (jeśli jest), potem nagrywanie
     try { if (backing.src) { backing.currentTime = 0; await backing.play(); } } catch(e) { log('Uwaga: podkład nie wystartował ('+e.message+').'); }
     mediaRecorder.start();
 
@@ -250,7 +235,7 @@ $('btnDownload').onclick = ()=>{
   const a=document.createElement('a'); a.href=URL.createObjectURL(recordedBlob); a.download=fileName; a.click();
 };
 
-/* ========= ODSŁUCH (nagranie + podkład równocześnie) ========= */
+/* ========= ODSŁUCH ========= */
 $('offsetMs').addEventListener('input', e=>{
   offsetMs = parseInt(e.target.value,10)||0;
   $('offsetVal').textContent = `${offsetMs} ms`;
@@ -269,10 +254,8 @@ $('btnAudition').onclick = ()=>{
   setAuditionButtons(true); isAuditioning = true;
   startAutoResync();
 };
-
 $('btnStopAud').onclick = ()=> stopAudition();
 
-// — zatrzymanie obu, gdy którykolwiek dobiegnie końca (fix „zaciętej płyty”) —
 player.addEventListener('ended', ()=> stopAudition());
 backing.addEventListener('ended', ()=> stopAudition());
 player.addEventListener('pause', ()=> { if (!backing.paused) backing.pause(); stopAutoResync(); });
@@ -308,70 +291,55 @@ function resyncBackingToPlayer(){
 }
 function safePlay(el){ el.play().catch(()=>{}); }
 
-/* ========= UPLOAD NA DRIVE ========= */
-$('btnUpload').onclick = async ()=>{
+/* ========= JEDEN PRZYCISK: upload → sheets → postMessage → zamknij ========= */
+$('btnSendAll').onclick = async ()=>{
   if(!recordedBlob){ alert('Najpierw nagraj.'); return; }
   try{
     log('Konwersja na base64…');
     const base64 = await blobToBase64(recordedBlob);
 
-    log('Wysyłanie do proxy…');
-    const r = await fetch(FN_URL, {
+    log('Wysyłanie na Drive…');
+    const r1 = await fetch(FN_URL, {
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ action:'upload', fileBase64: base64, mimeType, fileName })
     });
-    const j = await r.json();
-    if(!j.ok) throw new Error(j.error || 'Upload failed');
+    const up = await r1.json();
+    if(!up.ok) throw new Error(up.error || 'Upload failed');
 
-    $('aView').href = j.viewLink; $('aView').hidden = false;
-    $('aDl').href   = j.downloadLink; $('aDl').hidden = false;
-    $('fileIdSpan').textContent = j.fileId; $('fileIdLine').hidden = false;
-    log(`Upload OK, fileId: ${j.fileId}`);
+    $('aView').href = up.viewLink; $('aView').hidden = false;
+    $('aDl').href   = up.downloadLink; $('aDl').hidden = false;
+    $('fileIdSpan').textContent = up.fileId; $('fileIdLine').hidden = false;
+    log(`Upload OK, fileId: ${up.fileId}`);
 
     const meta = {
+      ver: 1, ts: Date.now(),
       imie: student.imie, nazwisko: student.nazwisko, email: student.email,
       miejscowosc: student.miejscowosc, tytul: student.tytul,
-      durationMs, fileId: j.fileId, viewLink: j.viewLink, downloadLink: j.downloadLink,
+      durationMs, fileId: up.fileId, viewLink: up.viewLink, downloadLink: up.downloadLink,
       fileName, mimeType
     };
-    lastToken = 'SPM:' + b64u(JSON.stringify(meta)); // UTF-8 safe
-    $('sendToSpmBtn').disabled = false;
-    $('copyTokenBtn').disabled = false;
-  }catch(e){
-    log('BŁĄD upload: '+e.message); alert('Upload nieudany: '+e.message);
-  }
-};
 
-/* ========= ZAPIS DO SHEETS + postMessage do WIX ========= */
-$('sendToSpmBtn').onclick = async ()=>{
-  if(!lastToken){ alert('Brak tokena – wyślij najpierw na Drive.'); return; }
-  try{
-    const meta = JSON.parse(ub64(lastToken.replace(/^SPM:/,'')));
     log('Zapis do Sheets…');
-    const r = await fetch(FN_URL, {
+    const r2 = await fetch(FN_URL, {
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ action:'meta', meta })
     });
-    const j = await r.json();
-    if(!j.ok) throw new Error(j.error || 'Sheets error');
-    log('Sheets: OK (wiersz '+j.row+')');
+    const m = await r2.json();
+    if(!m.ok) throw new Error(m.error || 'Sheets error');
+    log('Sheets: OK (wiersz '+m.row+')');
 
+    // wyślij do SPM i zamknij
     if(window.opener){
       window.opener.postMessage({ type:'spmUpload', payload: meta }, PARENT_ORIGIN);
     }
     try{ window.close(); }catch(_){}
-  }catch(e){
-    log('Sheets/SPM błąd: '+(e.message||e)); alert('Nie udało się zapisać do Sheets: '+(e.message||e));
-  }
-};
 
-/* ========= TOKEN (awaryjnie) ========= */
-$('copyTokenBtn').onclick = async ()=>{
-  if(!lastToken){ alert('Brak tokena.'); return; }
-  await navigator.clipboard.writeText(lastToken);
-  log('Skopiowano token.');
+  }catch(e){
+    log('BŁĄD: '+(e.message||e));
+    alert('Nie udało się dokończyć wysyłki: '+(e.message||e));
+  }
 };
 </script>
 </body>
