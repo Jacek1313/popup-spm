@@ -3,15 +3,12 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>SPM — nagrywanie (podkład z Wixa)</title>
+  <title>SPM — nagrywanie (podkład z pola #podkladUrl)</title>
   <style>
     :root { color-scheme: dark; }
     body { font-family: system-ui, Arial, sans-serif; margin: 24px; background:#111; color:#eee; }
     h1,h2{ margin: 0 0 12px 0; }
     h2{ margin-top: 22px; }
-    .row { display: grid; grid-template-columns: 160px 1fr; gap: 12px; margin: 8px 0; align-items:center; }
-    input[type="text"], input[type="email"], input[type="url"] { width: 100%; padding: 10px; border-radius:8px; border:1px solid #333; background:#181818; color:#eee; }
-    input[readonly]{ opacity:.85; }
     input[type="range"]{ width: 260px; }
     button{ padding:10px 14px; border-radius:8px; border:0; background:#2e7d32; color:#fff; cursor:pointer; }
     button.secondary{ background:#444; }
@@ -24,33 +21,14 @@
     .note{ opacity:.85; font-size:.92rem; }
     .val{ display:inline-block; min-width:70px; text-align:right; opacity:.9; }
     .inline-controls{ display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
-    details summary { cursor:pointer; user-select:none; margin-bottom:8px; }
-    .muted { opacity:.75; font-size:.92rem; }
   </style>
 </head>
 <body>
   <h1>SPM – nagrywanie</h1>
 
-  <!-- 1) Dane ucznia (z WIX) — domyślnie ZWINIĘTE, tylko podgląd -->
-  <div class="card">
-    <details id="studentDetails">
-      <summary>👤 Dane ucznia (z WIX) — podgląd</summary>
-      <div class="row"><label>Imię</label><input id="imie" type="text" readonly /></div>
-      <div class="row"><label>Nazwisko</label><input id="nazwisko" type="text" readonly /></div>
-      <div class="row"><label>E-mail</label><input id="email" type="email" readonly /></div>
-      <div class="row"><label>Miejscowość</label><input id="miejscowosc" type="text" readonly /></div>
-      <div class="row"><label>Tytuł utworu</label><input id="tytul" type="text" readonly /></div>
-      <div class="muted">Pochodzi ze strony SPM (WIX). W pliku i w Sheets zapisujemy tylko to, co dostaliśmy z WIX.</div>
-    </details>
-  </div>
-
-  <!-- 2) Podkład (TYLKO ODSŁUCH; przychodzi z Wixa) -->
+  <!-- 1) Podkład (z WIX; tylko odsłuch) -->
   <h2>Podkład (odsłuch)</h2>
   <div class="card">
-    <div class="row">
-      <label>URL podkładu</label>
-      <input id="trackUrl" type="url" placeholder="ustawi się automatycznie z WIX; możesz ręcznie zmienić" />
-    </div>
     <div class="inline-controls" style="margin-top:8px">
       <label for="trackVol">Głośność podkładu</label>
       <input id="trackVol" type="range" min="0" max="1" step="0.01" value="0.7" />
@@ -60,7 +38,7 @@
     <div class="note">Podkład gra w słuchawkach podczas nagrania. <b>Nie zapisuje się</b> w pliku — nagrywa się tylko mikrofon.</div>
   </div>
 
-  <!-- 3) Nagrywanie -->
+  <!-- 2) Nagrywanie -->
   <h2>Nagrywanie</h2>
   <div class="card">
     <div class="inline-controls">
@@ -72,7 +50,7 @@
       <audio id="player" controls></audio>
     </div>
 
-    <!-- 3b) Odsłuch po nagraniu z podkładem -->
+    <!-- Odsłuch po nagraniu z podkładem -->
     <div style="margin-top:14px" class="inline-controls">
       <button id="btnAudition" class="warn" disabled>Odsłuchaj (z podkładem)</button>
       <button id="btnStopAud" class="danger" disabled>Zatrzymaj odsłuch</button>
@@ -89,7 +67,7 @@
     <div class="note">Jeśli czujesz „rozjazd”, użyj suwaków: <b>przesunięcie</b> (ms) i <b>tempo</b> (±1%) — działa tylko w odsłuchu.</div>
   </div>
 
-  <!-- 4) Wysyłka na Drive -->
+  <!-- 3) Wysyłka na Drive -->
   <h2>Wysyłka na Drive</h2>
   <div class="card">
     <button id="btnUpload" class="warn" disabled>Wyślij na Drive</button>
@@ -100,7 +78,7 @@
     </div>
   </div>
 
-  <!-- 5) Przekazanie do SPM -->
+  <!-- 4) Przekazanie do SPM -->
   <h2>Przekazanie do SPM</h2>
   <div class="card">
     <button id="sendToSpmBtn" disabled>Wyślij do SPM i zamknij</button>
@@ -121,12 +99,9 @@ const PARENT_ORIGIN = new URLSearchParams(location.search).get('parent') || '*';
 let mediaRecorder, chunks = [], recordedBlob = null, startedAt = 0, durationMs = 0;
 let fileName = '', mimeType = 'audio/webm';
 let lastToken = '';
-
 const backing = document.getElementById('backing');
 const player  = document.getElementById('player');
-let offsetMs = 0;       // przesunięcie podkładu względem nagrania (odsłuch)
-let tempoPct = 0;       // zmiana tempa podkładu (odsłuch)
-let resyncTimer = null;
+let offsetMs = 0, tempoPct = 0, resyncTimer = null;
 
 /* ========= POMOCNICZE ========= */
 const $ = (id)=>document.getElementById(id);
@@ -134,38 +109,24 @@ function log(msg){ $('log').textContent += msg + '\n'; }
 function ts(){ return new Date().toISOString().replace(/[:.]/g,'-'); }
 function sanitize(s){ return (s||'').trim().replace(/\s+/g,'_').replace(/[^\w\-\.]+/g,''); }
 function blobToBase64(blob){ return new Promise((res,rej)=>{ const fr=new FileReader(); fr.onload=()=>res(fr.result.split(',')[1]); fr.onerror=rej; fr.readAsDataURL(blob); }); }
-function parseQ(){
-  try {
-    const q = new URLSearchParams(location.search).get('q');
-    if (!q) return {};
-    return JSON.parse(decodeURIComponent(q));
-  } catch(_) { return {}; }
-}
+function parseQ(){ try{ const q=new URLSearchParams(location.search).get('q'); return q?JSON.parse(decodeURIComponent(q)) : {}; }catch(_){ return {}; } }
 
-/* ========= INICJALIZACJA (prefill + podkład z Wixa) ========= */
+/* ========= INICJALIZACJA (prefill) ========= */
+let student = { imie:'', nazwisko:'', email:'', miejscowosc:'', tytul:'' };
 (function init(){
   const q = parseQ();
-  if (q.imie)        $('imie').value = q.imie;
-  if (q.nazwisko)    $('nazwisko').value = q.nazwisko;
-  if (q.email)       $('email').value = q.email;
-  if (q.miejscowosc) $('miejscowosc').value = q.miejscowosc;
-  if (q.tytul)       $('tytul').value = q.tytul;
-  if (q.trackUrl) {
-    $('trackUrl').value = q.trackUrl;
-    backing.src = q.trackUrl;
-    backing.load();
-    log('Podkład ustawiony z WIX.');
-  }
+  // dane ucznia — tylko w pamięci (bez pól widocznych)
+  student = {
+    imie: q.imie || '', nazwisko: q.nazwisko || '', email: q.email || '',
+    miejscowosc: q.miejscowosc || '', tytul: q.tytul || ''
+  };
+  // podkład — wyłącznie z q.trackUrl (czyli z #podkladUrl na stronie)
+  if (q.trackUrl) { backing.src = q.trackUrl; backing.load(); log('Podkład ustawiony z WIX (#podkladUrl).'); }
 })();
 
-/* ========= PODKŁAD (głośność + ręczna zmiana URL) ========= */
-$('trackUrl').addEventListener('change', e=>{
-  const url = (e.target.value||'').trim();
-  if (url) { backing.src = url; backing.load(); log('Podkład: URL zmieniony.'); }
-});
+/* ========= PODKŁAD: głośność / tempo ========= */
 $('trackVol').addEventListener('input', e=>{
-  const v = parseFloat(e.target.value||'0.7');
-  backing.volume = v; $('trackVolVal').textContent = Math.round(v*100) + '%';
+  const v = parseFloat(e.target.value||'0.7'); backing.volume = v; $('trackVolVal').textContent = Math.round(v*100)+'%';
 });
 backing.volume = parseFloat($('trackVol').value||'0.7');
 backing.preservesPitch = true; backing.mozPreservesPitch = true; backing.webkitPreservesPitch = true;
@@ -182,14 +143,17 @@ $('btnStart').onclick = async ()=>{
       durationMs = Date.now() - startedAt;
       recordedBlob = new Blob(chunks, {type:mimeType});
       player.src = URL.createObjectURL(recordedBlob);
-      const i = sanitize($('imie').value), n = sanitize($('nazwisko').value), t = sanitize($('tytul').value);
+
+      const i = sanitize(student.imie), n = sanitize(student.nazwisko), t = sanitize(student.tytul);
       fileName = `SPM-${ts()}-${i||'imie'}-${n||'nazw'}-${t||'tytul'}.webm`;
+
       $('btnDownload').disabled = false;
       $('btnUpload').disabled   = false;
       $('btnAudition').disabled = false;
       $('btnStopAud').disabled  = true;
       $('sendToSpmBtn').disabled = true;
       $('copyTokenBtn').disabled = true;
+
       log(`Nagranie gotowe. Czas ~ ${durationMs} ms; rozmiar ~ ${Math.round(recordedBlob.size/1024)} KB`);
     };
 
@@ -201,8 +165,7 @@ $('btnStart').onclick = async ()=>{
     $('btnStop').disabled = false;
     log('Nagrywanie… (podkład tylko w słuchawkach)');
   }catch(e){
-    alert('Brak dostępu do mikrofonu.');
-    log('BŁĄD mikrofon: '+e.message);
+    alert('Brak dostępu do mikrofonu.'); log('BŁĄD mikrofon: '+e.message);
   }
 };
 
@@ -221,7 +184,7 @@ $('btnDownload').onclick = ()=>{
   const a=document.createElement('a'); a.href=URL.createObjectURL(recordedBlob); a.download=fileName; a.click();
 };
 
-/* ========= ODSŁUCH PO NAGRANIU: jednoczesne PLAY (nagranie + podkład) ========= */
+/* ========= ODSŁUCH (nagranie + podkład równocześnie) ========= */
 $('offsetMs').addEventListener('input', e=>{
   offsetMs = parseInt(e.target.value,10)||0;
   $('offsetVal').textContent = `${offsetMs} ms`;
@@ -243,10 +206,9 @@ $('btnAudition').onclick = ()=>{
 
 $('btnStopAud').onclick = ()=> stopAudition();
 
-/* — Naprawa „zaciętej płyty”: twarde zatrzymanie odsłuchu na końcu — */
-player.addEventListener('ended', ()=> stopAudition());      // jeśli nagranie skończy się wcześniej
-backing.addEventListener('ended', ()=> stopAudition());     // jeśli podkład jest krótszy
-
+// — zatrzymanie obu, gdy którykolwiek dobiegnie końca (fix „zaciętej płyty”) —
+player.addEventListener('ended', ()=> stopAudition());
+backing.addEventListener('ended', ()=> stopAudition());
 player.addEventListener('pause', ()=> { if (!backing.paused) backing.pause(); stopAutoResync(); });
 
 function stopAudition(){
@@ -255,16 +217,13 @@ function stopAudition(){
   stopAutoResync();
   setAuditionButtons(false);
 }
-
 function setAuditionButtons(running){
   $('btnAudition').disabled = running;
   $('btnStopAud').disabled  = !running;
 }
-
 function startAutoResync(){
   stopAutoResync();
   resyncTimer = setInterval(()=>{
-    // jeśli którykolwiek się skończył — zatrzymaj odsłuch (eliminuje efekt „zapętlenia” ułamka sekundy)
     const pd = isFinite(player.duration) ? player.duration : 0;
     const bd = isFinite(backing.duration) ? backing.duration : 0;
     if ((pd && player.currentTime >= pd - 0.05) || (bd && backing.currentTime >= bd - 0.05)) {
@@ -304,10 +263,9 @@ $('btnUpload').onclick = async ()=>{
     $('fileIdSpan').textContent = j.fileId; $('fileIdLine').hidden = false;
     log(`Upload OK, fileId: ${j.fileId}`);
 
-    // meta + token (dane ucznia z WIX już są w inputach — tylko odczyt)
     const meta = {
-      imie: $('imie').value, nazwisko: $('nazwisko').value, email: $('email').value,
-      miejscowosc: $('miejscowosc').value, tytul: $('tytul').value,
+      imie: student.imie, nazwisko: student.nazwisko, email: student.email,
+      miejscowosc: student.miejscowosc, tytul: student.tytul,
       durationMs, fileId: j.fileId, viewLink: j.viewLink, downloadLink: j.downloadLink,
       fileName, mimeType
     };
@@ -315,8 +273,7 @@ $('btnUpload').onclick = async ()=>{
     $('sendToSpmBtn').disabled = false;
     $('copyTokenBtn').disabled = false;
   }catch(e){
-    log('BŁĄD upload: '+e.message);
-    alert('Upload nieudany: '+e.message);
+    log('BŁĄD upload: '+e.message); alert('Upload nieudany: '+e.message);
   }
 };
 
@@ -340,8 +297,7 @@ $('sendToSpmBtn').onclick = async ()=>{
     }
     try{ window.close(); }catch(_){}
   }catch(e){
-    log('Sheets/SPM błąd: '+(e.message||e));
-    alert('Nie udało się zapisać do Sheets: '+(e.message||e));
+    log('Sheets/SPM błąd: '+(e.message||e)); alert('Nie udało się zapisać do Sheets: '+(e.message||e));
   }
 };
 
