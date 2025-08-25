@@ -6,110 +6,140 @@
   <title>SPM – Studio nagrań</title>
   <style>
     :root { color-scheme: dark; }
-    body { font-family: system-ui, Arial, sans-serif; margin: 24px; background:#111; color:#eee; }
-    h1,h2{ margin: 0 0 12px 0; }
-    h2{ margin-top: 22px; }
-    input[type="range"]{ width: 260px; }
-    button{ padding:10px 14px; border-radius:8px; border:0; background:#2e7d32; color:#fff; cursor:pointer; }
-    button.secondary{ background:#444; }
-    button.warn{ background:#1565c0; }
-    button.danger{ background:#8e1b1b; }
-    button:disabled{ opacity:.6; cursor:not-allowed; }
-    a.inline { display:inline-block; margin:6px 8px 0 0; }
-    .card{ border:1px solid #272727; border-radius:12px; padding:16px; margin:18px 0; background:#141414; }
-    #log{ background:#0c0c0c; border:1px solid #222; border-radius:12px; padding:12px; white-space:pre-wrap; min-height:120px; }
-    .note{ opacity:.85; font-size:.92rem; }
-    .val{ display:inline-block; min-width:70px; text-align:right; opacity:.9; }
-    .inline-controls{ display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
-    .hidden-audio { display:none; } /* chowamy natywne UI <audio> */
-    .progress-row{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:10px; }
-    .progress-row label{ min-width:120px; opacity:.9; }
-    .progress-row input[type="range"]{ width: 360px; }
-    .time{ font-variant-tabular-nums: tabular-nums; opacity:.9; min-width:80px; text-align:right; }
-
-    #banner {
-      border:1px solid #333; padding:10px 12px; border-radius:10px;
-      margin-bottom:14px; text-align:center; color:#eaeaea; background:#0b0b0b;
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, Arial, sans-serif; margin: 16px; background:#0f0f0f; color:#f1f1f1; }
+    h1{ margin: 0 0 14px 0; font-size: 1.6rem; }
+    h2{ margin: 18px 0 10px; font-size: 1.2rem; }
+    .section{ border:1px solid #262626; border-radius:12px; padding:14px; margin:14px 0; background:#141414; }
+    .row{ display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
+    .stack-sm{ display:flex; gap:10px; flex-wrap:wrap; align-items:stretch; }
+    .stack-sm > * { flex: 0 0 auto; }
+    @media (max-width:640px){
+      .row{ flex-direction:column; align-items:flex-start; }
+      .stack-sm{ flex-direction:column; }
     }
-    @keyframes blink { 50% { opacity:.35 } }
-    .blink { animation: blink 0.9s linear infinite; }
+
+    input[type="range"]{ width: min(420px, 90vw); }
+    .val, .time{ font-variant-numeric: tabular-nums; opacity:.9; }
+    .time{ min-width:92px; text-align:right; }
+
+    /* przyciski – ten sam styl dla <button> i <a> */
+    .btn{
+      display:inline-flex; align-items:center; justify-content:center;
+      padding:10px 14px; border-radius:10px; border:0; background:#2e7d32; color:#fff;
+      text-decoration:none; cursor:pointer; font-weight:600; box-shadow:0 0 0 0 rgba(0,0,0,0);
+      transition: transform .04s ease, box-shadow .2s ease, opacity .2s ease;
+    }
+    .btn:hover{ box-shadow:0 6px 16px rgba(0,0,0,.25); }
+    .btn:active{ transform: translateY(1px); }
+    .btn.secondary{ background:#3d3d3d; color:#f2f2f2; }
+    .btn.warn{ background:#1565c0; }
+    .btn.danger{ background:#8e1b1b; }
+    .btn:disabled{ opacity:.55; cursor:not-allowed; box-shadow:none; }
+
+    .note{ opacity:.85; font-size:.92rem; }
+
+    /* baner-instrukcja */
+    #banner { border:1px solid #2a2a2a; padding:10px 12px; border-radius:10px; margin-bottom:12px; text-align:center; color:#eaeaea; background:#121212; }
+    @keyframes blink { 50% { opacity:.38 } }
+    .blink { animation: blink .9s linear infinite; }
+
+    /* Log kompaktowy */
+    #log{ background:#0b0b0b; border:1px solid #202020; border-radius:12px; padding:12px; white-space:pre-wrap; }
+    .log-wrap{ max-height:260px; overflow:auto; }
+
+    /* kroki – delikatne prowadzenie */
+    .step { position:relative; }
+    .step::before{
+      content: attr(data-step);
+      position:absolute; left:-10px; top:-10px;
+      background:#1e1e1e; border:1px solid #2a2a2a; color:#cfcfcf;
+      padding:2px 8px; border-radius:999px; font-size:.78rem;
+    }
+    .step.active{ outline:2px solid #1e5e1f; outline-offset: 2px; }
   </style>
 </head>
 <body>
-  <div id="banner"></div>
+  <div id="banner">1) Wybierz podkład w SPM → 2) Nagraj → 3) Wyślij → 4) <b>Wróć do SPM – Potwierdź wysyłkę i Zapisz</b></div>
 
   <h1>SPM – Studio nagrań</h1>
 
   <!-- 1) Podkład (odsłuch) -->
-  <h2>Podkład (odsłuch)</h2>
-  <div class="card">
-    <div class="inline-controls" style="margin-top:8px">
+  <div class="section step" id="step1" data-step="Krok 1">
+    <h2>Podkład (odsłuch)</h2>
+    <div class="row" style="margin-top:6px">
       <label for="trackVol">Głośność podkładu</label>
       <input id="trackVol" type="range" min="0" max="1" step="0.01" value="0.7" />
       <span id="trackVolVal" class="val">70%</span>
     </div>
 
-    <div class="progress-row">
+    <div class="row" style="margin-top:8px">
       <label for="backingSeek">Postęp podkładu</label>
       <input id="backingSeek" type="range" min="0" max="0" step="0.01" value="0" />
       <span id="backingTime" class="time">0:00 / 0:00</span>
     </div>
 
-    <audio id="backing" preload="auto" class="hidden-audio"></audio>
-    <div class="note">Podkład gra w słuchawkach podczas nagrania. <b>Nie zapisuje się</b> w pliku — nagrywa się tylko mikrofon.</div>
+    <audio id="backing" preload="auto" style="display:none"></audio>
+    <div class="note">Podkład gra w słuchawkach podczas nagrywania. <b>Nie zapisuje się</b> w pliku — nagrywa się tylko mikrofon.</div>
   </div>
 
   <!-- 2) Nagrywanie -->
-  <h2>Nagrywanie</h2>
-  <div class="card">
-    <div class="inline-controls">
-      <button id="btnStart">Start</button>
-      <button id="btnStop" class="secondary" disabled>Stop</button>
-      <button id="btnDownload" class="secondary" disabled>Pobierz</button>
+  <div class="section step" id="step2" data-step="Krok 2">
+    <h2>Nagrywanie</h2>
+
+    <div class="stack-sm" style="margin:6px 0 4px">
+      <button id="btnStart" class="btn">Start</button>
+      <button id="btnStop" class="btn secondary" disabled>Stop</button>
+      <button id="btnDownload" class="btn secondary" disabled>Pobierz wokal</button>
     </div>
 
-    <div class="progress-row">
+    <div class="row" style="margin-top:6px">
       <label for="playerSeek">Postęp nagrania</label>
       <input id="playerSeek" type="range" min="0" max="0" step="0.01" value="0" />
       <span id="playerTime" class="time">0:00 / 0:00</span>
     </div>
 
-    <audio id="player" class="hidden-audio"></audio>
+    <audio id="player" style="display:none"></audio>
 
-    <div style="margin-top:14px" class="inline-controls">
-      <button id="btnAudition" class="warn" disabled>Odsłuchaj (z podkładem)</button>
-      <button id="btnStopAud" class="danger" disabled>Zatrzymaj odsłuch</button>
+    <div class="stack-sm" style="margin-top:10px">
+      <button id="btnAudition" class="btn warn" disabled>Odsłuchaj (z podkładem)</button>
+      <button id="btnStopAud" class="btn danger" disabled>Zatrzymaj odsłuch</button>
 
-      <label for="offsetMs">Korekta przesunięcia</label>
-      <input id="offsetMs" type="range" min="-800" max="800" step="10" value="0" />
-      <span id="offsetVal" class="val">0 ms</span>
+      <div class="row">
+        <label for="offsetMs">Korekta przesunięcia</label>
+        <input id="offsetMs" type="range" min="-800" max="800" step="10" value="0" />
+        <span id="offsetVal" class="val">0 ms</span>
+      </div>
 
-      <label for="tempoPct">Korekta tempa</label>
-      <input id="tempoPct" type="range" min="-1" max="1" step="0.05" value="0" />
-      <span id="tempoVal" class="val">0.00%</span>
+      <div class="row">
+        <label for="tempoPct">Korekta tempa</label>
+        <input id="tempoPct" type="range" min="-1" max="1" step="0.05" value="0" />
+        <span id="tempoVal" class="val">0.00%</span>
+      </div>
     </div>
 
     <div class="note">Jeśli czujesz „rozjazd”, użyj suwaków: <b>przesunięcie</b> (ms) i <b>tempo</b> (±1%) — działa tylko w odsłuchu.</div>
   </div>
 
-  <!-- 3) Wysyłka -->
-  <h2>Wyślij</h2>
-  <div class="card">
-    <div class="inline-controls">
-      <button id="btnSendAll" class="warn" disabled>Wyślij</button>
-      <button id="btnConfirmSend" class="secondary" style="display:none">Potwierdź wysyłkę</button>
-      <a id="aReturn" class="inline" href="#" style="display:none">↩️ Wróć do SPM i potwierdź</a>
+  <!-- 3) Wyślij -->
+  <div class="section step" id="step3" data-step="Krok 3">
+    <h2>Wyślij</h2>
+    <div class="stack-sm" style="margin:6px 0 8px">
+      <button id="btnSendAll" class="btn warn" disabled>Wyślij</button>
+
+      <!-- Link-przycisk: zostawiamy <a>, zero zamykania okna -->
+      <a id="aReturn" class="btn" href="#" style="display:none">Wróć do SPM – Potwierdź wysyłkę i Zapisz</a>
     </div>
-    <div style="margin-top:10px">
-      <a id="aView" class="inline" href="#" target="_blank" rel="noopener" hidden>🔎 Podgląd (Drive)</a>
-      <a id="aDl" class="inline" href="#" target="_blank" rel="noopener" hidden>⬇️ Pobierz (direct)</a>
-      <div id="fileIdLine" class="note" hidden>fileId: <span id="fileIdSpan"></span></div>
-    </div>
+
+    <!-- Linia z fileId (zostawiamy, ale nie pokazujemy użytkownikom) -->
+    <div id="fileIdLine" class="note" hidden>fileId: <span id="fileIdSpan"></span></div>
   </div>
 
-  <!-- Log -->
-  <h2>Log</h2>
-  <pre id="log"></pre>
+  <!-- 4) Log -->
+  <div class="section step" id="step4" data-step="Podgląd">
+    <h2>Log</h2>
+    <div class="log-wrap"><pre id="log"></pre></div>
+  </div>
 
 <script>
 /* ========= KONFIG ========= */
@@ -122,7 +152,7 @@ const PARENT_URL    = parentUrlRaw || ''; // do linku „Wróć do SPM…”
 /* ========= STAN ========= */
 let mediaRecorder, chunks = [], recordedBlob = null, startedAt = 0, durationMs = 0;
 let fileName = '', mimeType = 'audio/webm';
-let metaToSend = null;   // <- meta do "Potwierdź wysyłkę"
+let metaToSend = null;
 
 const $ = id => document.getElementById(id);
 const backing = $('backing');
@@ -144,6 +174,7 @@ function parseQ(){ try{ const q=new URLSearchParams(location.search).get('q'); r
 function fmt(t){ if(!isFinite(t)||t<0) t=0; const m=Math.floor(t/60), s=Math.floor(t%60); return `${m}:${String(s).padStart(2,'0')}`; }
 function clamp(v,min,max){ return Math.min(max, Math.max(min, v)); }
 function setBanner(text){ banner.textContent = text || ''; }
+function stepActive(id){ try{ document.querySelectorAll('.step').forEach(s=>s.classList.remove('active')); $(id).classList.add('active'); }catch(_){} }
 
 /* ========= PREFILL ========= */
 let student = { imie:'', nazwisko:'', email:'', miejscowosc:'', tytul:'', trackUrl:'' };
@@ -154,7 +185,8 @@ let student = { imie:'', nazwisko:'', email:'', miejscowosc:'', tytul:'', trackU
     miejscowosc: q.miejscowosc || '', tytul: q.tytul || '', trackUrl: q.trackUrl || ''
   };
   if (student.trackUrl) { backing.src = student.trackUrl; backing.load(); log('Podkład ustawiony (z SPM).'); }
-  setBanner('');
+  setBanner('1) Wybierz podkład w SPM → 2) Nagraj → 3) Wyślij → 4) Wróć do SPM – Potwierdź wysyłkę i Zapisz');
+  stepActive('step2');
 })();
 
 /* ========= PROGRESS ========= */
@@ -217,6 +249,8 @@ $('btnStart').onclick = async ()=>{
       $('btnAudition').disabled = false;
       $('btnStopAud').disabled  = true;
 
+      setBanner('Gotowe nagranie. Możesz odsłuchać, pobrać wokal albo od razu „Wyślij”.');
+      stepActive('step3');
       log(`Nagranie gotowe. Czas ~ ${durationMs} ms; rozmiar ~ ${Math.round(recordedBlob.size/1024)} KB`);
     };
 
@@ -225,7 +259,7 @@ $('btnStart').onclick = async ()=>{
 
     $('btnStart').disabled = true;
     $('btnStop').disabled = false;
-    log('Nagrywanie… (podkład tylko w słuchawkach)');
+    setBanner('Nagrywanie… (podkład tylko w słuchawkach). Po zakończeniu kliknij „Stop”.');
   }catch(e){
     alert('Brak dostępu do mikrofonu.'); log('BŁĄD mikrofon: '+e.message);
   }
@@ -307,7 +341,7 @@ $('btnSendAll').onclick = async ()=>{
   if(!recordedBlob){ alert('Najpierw nagraj.'); return; }
   try{
     const sendBtn = $('btnSendAll');
-    sendBtn.textContent = 'Czekaj…';
+    sendBtn.textContent = 'Wysyłam…';
     sendBtn.classList.add('blink');
     sendBtn.disabled = true;
 
@@ -322,22 +356,21 @@ $('btnSendAll').onclick = async ()=>{
     }).then(r=>r.json());
     if(!up.ok) throw new Error(up.error || 'Upload failed');
 
-    $('aView').href = up.viewLink; $('aView').hidden = false;
-    $('aDl').href   = up.downloadLink; $('aDl').hidden = false;
-    $('fileIdSpan').textContent = up.fileId; $('fileIdLine').hidden = false;
+    $('fileIdSpan').textContent = up.fileId; $('fileIdLine').hidden = true; // trzymamy ukryte dla uczniów
     log(`Upload OK, fileId: ${up.fileId}`);
 
-    /* JEDYNA ZMIANA: dodajemy trackUrl do metaToSend */
+    // payload do SPM (z echem tytułu i podkładu)
     metaToSend = {
       ver: 1, ts: Date.now(),
       imie: student.imie, nazwisko: student.nazwisko, email: student.email,
       miejscowosc: student.miejscowosc, tytul: student.tytul,
-      trackUrl: student.trackUrl,                 // <— DODANE
+      trackUrl: student.trackUrl,
       durationMs,
       fileId: up.fileId, viewLink: up.viewLink, downloadLink: up.downloadLink,
       fileName, mimeType
     };
 
+    // zapis dodatkowych metadanych (jak było)
     log('Zapis do Sheets…');
     const m = await fetch(FN_URL, {
       method:'POST',
@@ -347,20 +380,19 @@ $('btnSendAll').onclick = async ()=>{
     if(!m.ok) throw new Error(m.error || 'Sheets error');
     log('Sheets: OK (wiersz '+m.row+')');
 
-    $('btnConfirmSend').style.display = '';
-    $('btnConfirmSend').disabled = false;
-
+    // pokaż link-przycisk powrotu
     if (PARENT_URL) {
       const spmParam = encodeURIComponent(JSON.stringify(metaToSend));
       $('aReturn').href = PARENT_URL + (PARENT_URL.includes('?') ? '&' : '?') + 'spm=' + spmParam;
-      $('aReturn').style.display = '';
+      $('aReturn').style.display = 'inline-flex';
     }
 
-    setBanner('Wysłano. Kliknij „Potwierdź wysyłkę”, a potem wróć do SPM i kliknij „Zapisz”.\n' +
-              'Możesz też użyć linku „Wróć do SPM i potwierdź”.');
+    setBanner('Wysłano. Kliknij:  ➜  „Wróć do SPM – Potwierdź wysyłkę i Zapisz”.');
+    stepActive('step3');
 
     sendBtn.classList.remove('blink');
     sendBtn.textContent = 'Wyślij';
+    sendBtn.disabled = false;
 
   }catch(e){
     $('btnSendAll').classList.remove('blink');
@@ -369,17 +401,6 @@ $('btnSendAll').onclick = async ()=>{
     log('BŁĄD: '+(e.message||e));
     alert('Nie udało się dokończyć wysyłki: '+(e.message||e));
   }
-};
-
-/* PostMessage z tym samym payloadem (zawiera już trackUrl) */
-$('btnConfirmSend').onclick = ()=>{
-  if (!metaToSend){ alert('Brak danych do potwierdzenia.'); return; }
-  try{
-    if (window.opener) {
-      window.opener.postMessage({ type:'spmUpload', payload: metaToSend }, PARENT_ORIGIN);
-    }
-  }catch(_){}
-  setBanner('Potwierdzono. Wróć do SPM i kliknij „Zapisz”.');
 };
 </script>
 </body>
