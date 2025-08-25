@@ -21,12 +21,16 @@
     .note{ opacity:.85; font-size:.92rem; }
     .val{ display:inline-block; min-width:70px; text-align:right; opacity:.9; }
     .inline-controls{ display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
-    .hidden-audio { display:none; }
+    .hidden-audio { display:none; } /* chowamy natywne UI <audio> */
     .progress-row{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:10px; }
     .progress-row label{ min-width:120px; opacity:.9; }
     .progress-row input[type="range"]{ width: 360px; }
     .time{ font-variant-tabular-nums: tabular-nums; opacity:.9; min-width:80px; text-align:right; }
-    #banner { border:1px solid #333; padding:10px 12px; border-radius:10px; margin-bottom:14px; text-align:center; color:#eaeaea; background:#0b0b0b; }
+
+    #banner {
+      border:1px solid #333; padding:10px 12px; border-radius:10px;
+      margin-bottom:14px; text-align:center; color:#eaeaea; background:#0b0b0b;
+    }
     @keyframes blink { 50% { opacity:.35 } }
     .blink { animation: blink 0.9s linear infinite; }
   </style>
@@ -113,12 +117,12 @@ const FN_URL = '/.netlify/functions/spm';
 const qs            = new URLSearchParams(location.search);
 const parentUrlRaw  = qs.get('parent') || '';
 const PARENT_ORIGIN = parentUrlRaw ? new URL(parentUrlRaw).origin : '*';
-const PARENT_URL    = parentUrlRaw || '';
+const PARENT_URL    = parentUrlRaw || ''; // do linku „Wróć do SPM…”
 
 /* ========= STAN ========= */
 let mediaRecorder, chunks = [], recordedBlob = null, startedAt = 0, durationMs = 0;
 let fileName = '', mimeType = 'audio/webm';
-let metaToSend = null;
+let metaToSend = null;   // <- meta do "Potwierdź wysyłkę"
 
 const $ = id => document.getElementById(id);
 const backing = $('backing');
@@ -153,8 +157,150 @@ let student = { imie:'', nazwisko:'', email:'', miejscowosc:'', tytul:'', trackU
   setBanner('');
 })();
 
-/* ========= (reszta bez zmian — nagrywanie, odsłuch, itd.) ========= */
-/* …[tu cały środek pliku bez zmian, skrócony dla czytelności]… */
+/* ========= PROGRESS ========= */
+function refreshProgress(){
+  const bd = isFinite(backing.duration) ? backing.duration : 0;
+  const bc = isFinite(backing.currentTime) ? backing.currentTime : 0;
+  backingSeek.max = bd || 0;
+  if (document.activeElement !== backingSeek) backingSeek.value = bc;
+  backingTime.textContent = `${fmt(bc)} / ${fmt(bd)}`;
+
+  const pd = isFinite(player.duration) ? player.duration : (durationMs? durationMs/1000 : 0);
+  const pc = isFinite(player.currentTime) ? player.currentTime : 0;
+  playerSeek.max = pd || 0;
+  if (document.activeElement !== playerSeek) playerSeek.value = pc;
+  playerTime.textContent = `${fmt(pc)} / ${fmt(pd)}`;
+
+  rafId = requestAnimationFrame(refreshProgress);
+}
+rafId = requestAnimationFrame(refreshProgress);
+
+playerSeek.addEventListener('input', ()=>{
+  const pd = isFinite(player.duration) ? player.duration : 0;
+  const t = clamp(parseFloat(playerSeek.value)||0, 0, pd||1e9);
+  player.currentTime = t;
+  if (isAuditioning) resyncBackingToPlayer();
+});
+backingSeek.addEventListener('input', ()=>{
+  const bd = isFinite(backing.duration) ? backing.duration : 0;
+  const bt = clamp(parseFloat(backingSeek.value)||0, 0, bd||1e9);
+  const targetPlayer = clamp(bt - offsetMs/1000, 0, (isFinite(player.duration)?player.duration:1e9));
+  player.currentTime = targetPlayer;
+  if (isAuditioning) resyncBackingToPlayer();
+});
+
+/* ========= PODKŁAD ========= */
+$('trackVol').addEventListener('input', e=>{
+  const v = parseFloat(e.target.value||'0.7'); backing.volume = v; $('trackVolVal').textContent = Math.round(v*100)+'%';
+});
+backing.volume = parseFloat($('trackVol').value||'0.7');
+backing.preservesPitch = true; backing.mozPreservesPitch = true; backing.webkitPreservesPitch = true;
+
+/* ========= NAGRYWANIE ========= */
+$('btnStart').onclick = async ()=>{
+  try{
+    const micStream = await navigator.mediaDevices.getUserMedia({audio:true});
+    chunks = []; recordedBlob = null; durationMs = 0; startedAt = Date.now();
+
+    mediaRecorder = new MediaRecorder(micStream, {mimeType});
+    mediaRecorder.ondataavailable = e => { if(e.data && e.data.size) chunks.push(e.data); };
+    mediaRecorder.onstop = ()=>{
+      durationMs = Date.now() - startedAt;
+      recordedBlob = new Blob(chunks, {type:mimeType});
+      player.src = URL.createObjectURL(recordedBlob);
+
+      const i = sanitize(student.imie), n = sanitize(student.nazwisko), t = sanitize(student.tytul);
+      fileName = `SPM-${ts()}-${i||'imie'}-${n||'nazw'}-${t||'tytul'}.webm`;
+
+      $('btnDownload').disabled = false;
+      $('btnSendAll').disabled  = false;
+      $('btnAudition').disabled = false;
+      $('btnStopAud').disabled  = true;
+
+      log(`Nagranie gotowe. Czas ~ ${durationMs} ms; rozmiar ~ ${Math.round(recordedBlob.size/1024)} KB`);
+    };
+
+    try { if (backing.src) { backing.currentTime = 0; await backing.play(); } } catch(e) { log('Uwaga: podkład nie wystartował ('+e.message+').'); }
+    mediaRecorder.start();
+
+    $('btnStart').disabled = true;
+    $('btnStop').disabled = false;
+    log('Nagrywanie… (podkład tylko w słuchawkach)');
+  }catch(e){
+    alert('Brak dostępu do mikrofonu.'); log('BŁĄD mikrofon: '+e.message);
+  }
+};
+
+$('btnStop').onclick = ()=>{
+  if(mediaRecorder && mediaRecorder.state==='recording'){
+    mediaRecorder.stop();
+    mediaRecorder.stream.getTracks().forEach(t=>t.stop());
+    $('btnStart').disabled = false;
+    $('btnStop').disabled = true;
+    try{ backing.pause(); }catch(_){}
+  }
+};
+
+$('btnDownload').onclick = ()=>{
+  if(!recordedBlob) return;
+  const a=document.createElement('a'); a.href=URL.createObjectURL(recordedBlob); a.download=fileName; a.click();
+};
+
+/* ========= ODSŁUCH ========= */
+$('offsetMs').addEventListener('input', e=>{
+  offsetMs = parseInt(e.target.value,10)||0;
+  $('offsetVal').textContent = `${offsetMs} ms`;
+  if (!player.paused) resyncBackingToPlayer();
+});
+$('tempoPct').addEventListener('input', e=>{
+  tempoPct = parseFloat(e.target.value)||0;
+  $('tempoVal').textContent = `${tempoPct.toFixed(2)}%`;
+  backing.playbackRate = 1 + (tempoPct/100);
+});
+
+$('btnAudition').onclick = ()=>{
+  if (!recordedBlob || !backing.src) { alert('Brak nagrania lub podkładu.'); return; }
+  resyncBackingToPlayer();
+  safePlay(backing); safePlay(player);
+  setAuditionButtons(true); isAuditioning = true;
+  startAutoResync();
+};
+$('btnStopAud').onclick = ()=> stopAudition();
+
+player.addEventListener('ended', ()=> stopAudition());
+backing.addEventListener('ended', ()=> stopAudition());
+player.addEventListener('pause', ()=> { if (!backing.paused) backing.pause(); stopAutoResync(); });
+
+function stopAudition(){
+  try{ player.pause(); }catch(_){}
+  try{ backing.pause(); }catch(_){}
+  stopAutoResync();
+  setAuditionButtons(false); isAuditioning = false;
+}
+function setAuditionButtons(running){
+  $('btnAudition').disabled = running;
+  $('btnStopAud').disabled  = !running;
+}
+function startAutoResync(){
+  stopAutoResync();
+  resyncTimer = setInterval(()=>{
+    const pd = isFinite(player.duration) ? player.duration : 0;
+    const bd = isFinite(backing.duration) ? backing.duration : 0;
+    if ((pd && player.currentTime >= pd - 0.05) || (bd && backing.currentTime >= bd - 0.05)) {
+      stopAudition(); return;
+    }
+    const target = player.currentTime + offsetMs/1000;
+    const diff = Math.abs((backing.currentTime||0) - target);
+    if (diff > 0.12) backing.currentTime = Math.max(0, target);
+  }, 400);
+}
+function stopAutoResync(){ if (resyncTimer){ clearInterval(resyncTimer); resyncTimer=null; } }
+function resyncBackingToPlayer(){
+  const target = player.currentTime + offsetMs/1000;
+  backing.currentTime = Math.max(0, target);
+  backing.playbackRate = 1 + (tempoPct/100);
+}
+function safePlay(elm){ elm.play().catch(()=>{}); }
 
 /* ========= WYSYŁKA ========= */
 $('btnSendAll').onclick = async ()=>{
@@ -165,8 +311,10 @@ $('btnSendAll').onclick = async ()=>{
     sendBtn.classList.add('blink');
     sendBtn.disabled = true;
 
+    log('Konwersja na base64…');
     const base64 = await blobToBase64(recordedBlob);
 
+    log('Wysyłanie na Drive…');
     const up = await fetch(FN_URL, {
       method:'POST',
       headers:{'Content-Type':'application/json'},
@@ -177,25 +325,27 @@ $('btnSendAll').onclick = async ()=>{
     $('aView').href = up.viewLink; $('aView').hidden = false;
     $('aDl').href   = up.downloadLink; $('aDl').hidden = false;
     $('fileIdSpan').textContent = up.fileId; $('fileIdLine').hidden = false;
+    log(`Upload OK, fileId: ${up.fileId}`);
 
-    /* >>> KLUCZOWA ZMIANA: echo tytułu i PODKŁADU do payloadu <<< */
+    /* JEDYNA ZMIANA: dodajemy trackUrl do metaToSend */
     metaToSend = {
       ver: 1, ts: Date.now(),
       imie: student.imie, nazwisko: student.nazwisko, email: student.email,
       miejscowosc: student.miejscowosc, tytul: student.tytul,
-      trackUrl: student.trackUrl,                    // <----- DODANE
+      trackUrl: student.trackUrl,                 // <— DODANE
       durationMs,
       fileId: up.fileId, viewLink: up.viewLink, downloadLink: up.downloadLink,
       fileName, mimeType
     };
-    /* >>> KONIEC ZMIANY <<< */
 
+    log('Zapis do Sheets…');
     const m = await fetch(FN_URL, {
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ action:'meta', meta: metaToSend })
     }).then(r=>r.json());
     if(!m.ok) throw new Error(m.error || 'Sheets error');
+    log('Sheets: OK (wiersz '+m.row+')');
 
     $('btnConfirmSend').style.display = '';
     $('btnConfirmSend').disabled = false;
@@ -206,7 +356,9 @@ $('btnSendAll').onclick = async ()=>{
       $('aReturn').style.display = '';
     }
 
-    setBanner('Wysłano. Kliknij „Potwierdź wysyłkę”, a potem wróć do SPM i kliknij „Zapisz”.');
+    setBanner('Wysłano. Kliknij „Potwierdź wysyłkę”, a potem wróć do SPM i kliknij „Zapisz”.\n' +
+              'Możesz też użyć linku „Wróć do SPM i potwierdź”.');
+
     sendBtn.classList.remove('blink');
     sendBtn.textContent = 'Wyślij';
 
@@ -214,6 +366,7 @@ $('btnSendAll').onclick = async ()=>{
     $('btnSendAll').classList.remove('blink');
     $('btnSendAll').textContent = 'Wyślij';
     $('btnSendAll').disabled = false;
+    log('BŁĄD: '+(e.message||e));
     alert('Nie udało się dokończyć wysyłki: '+(e.message||e));
   }
 };
