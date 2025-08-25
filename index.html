@@ -23,7 +23,7 @@
     .val, .time{ font-variant-numeric: tabular-nums; opacity:.9; }
     .time{ min-width:92px; text-align:right; }
 
-    /* przyciski – ten sam styl dla <button> i <a> */
+    /* buttons (shared for <button> and <a>) */
     .btn{
       display:inline-flex; align-items:center; justify-content:center;
       padding:10px 14px; border-radius:10px; border:0; background:#2e7d32; color:#fff;
@@ -39,16 +39,16 @@
 
     .note{ opacity:.85; font-size:.92rem; }
 
-    /* baner-instrukcja */
+    /* banner */
     #banner { border:1px solid #2a2a2a; padding:10px 12px; border-radius:10px; margin-bottom:12px; text-align:center; color:#eaeaea; background:#121212; }
     @keyframes blink { 50% { opacity:.38 } }
     .blink { animation: blink .9s linear infinite; }
 
-    /* Log kompaktowy */
+    /* Log compact */
     #log{ background:#0b0b0b; border:1px solid #202020; border-radius:12px; padding:12px; white-space:pre-wrap; }
     .log-wrap{ max-height:260px; overflow:auto; }
 
-    /* kroki – delikatne prowadzenie */
+    /* steps (soft guidance) */
     .step { position:relative; }
     .step::before{
       content: attr(data-step);
@@ -126,12 +126,11 @@
     <h2>Wyślij</h2>
     <div class="stack-sm" style="margin:6px 0 8px">
       <button id="btnSendAll" class="btn warn" disabled>Wyślij</button>
-
-      <!-- Link-przycisk: zostawiamy <a>, zero zamykania okna -->
+      <!-- Link-przycisk powrotu do SPM z payloadem -->
       <a id="aReturn" class="btn" href="#" style="display:none">Wróć do SPM – Potwierdź wysyłkę i Zapisz</a>
     </div>
 
-    <!-- Linia z fileId (zostawiamy, ale nie pokazujemy użytkownikom) -->
+    <!-- Dyskretnie zachowany fileId (ukryty) -->
     <div id="fileIdLine" class="note" hidden>fileId: <span id="fileIdSpan"></span></div>
   </div>
 
@@ -144,10 +143,13 @@
 <script>
 /* ========= KONFIG ========= */
 const FN_URL = '/.netlify/functions/spm';
+const MAX_MS = 7 * 60 * 1000;      // twardy limit 7 min
+const WARN_BEFORE_MS = 30 * 1000;  // ostrzeżenie 30 s przed limitem
+
 const qs            = new URLSearchParams(location.search);
 const parentUrlRaw  = qs.get('parent') || '';
 const PARENT_ORIGIN = parentUrlRaw ? new URL(parentUrlRaw).origin : '*';
-const PARENT_URL    = parentUrlRaw || ''; // do linku „Wróć do SPM…”
+const PARENT_URL    = parentUrlRaw || '';
 
 /* ========= STAN ========= */
 let mediaRecorder, chunks = [], recordedBlob = null, startedAt = 0, durationMs = 0;
@@ -164,6 +166,8 @@ const playerTime  = $('playerTime');
 const banner = $('banner');
 
 let offsetMs = 0, tempoPct = 0, resyncTimer = null, rafId = null, isAuditioning = false;
+let isRecording = false;
+let maxTimer = null, warnTimer = null;
 
 /* ========= UTIL ========= */
 function log(m){ $('log').textContent += m + '\n'; }
@@ -249,36 +253,62 @@ $('btnStart').onclick = async ()=>{
       $('btnAudition').disabled = false;
       $('btnStopAud').disabled  = true;
 
-      setBanner('Gotowe nagranie. Możesz odsłuchać, pobrać wokal albo od razu „Wyślij”.');
+      // Po stop – przejdź do kroku „Wyślij”
+      setBanner('Gotowe nagranie. Możesz odsłuchać, pobrać wokal albo „Wyślij”.');
       stepActive('step3');
       log(`Nagranie gotowe. Czas ~ ${durationMs} ms; rozmiar ~ ${Math.round(recordedBlob.size/1024)} KB`);
     };
 
+    // ====== AUTO-STOP z końcem podkładu (tylko podczas nagrywania) ======
+    backing.addEventListener('ended', onBackingEndedDuringRec);
+    isRecording = true;
+
     try { if (backing.src) { backing.currentTime = 0; await backing.play(); } } catch(e) { log('Uwaga: podkład nie wystartował ('+e.message+').'); }
     mediaRecorder.start();
 
+    // Bezpieczniki czasu (awaryjnie)
+    startMaxTimers();
+
     $('btnStart').disabled = true;
     $('btnStop').disabled = false;
-    setBanner('Nagrywanie… (podkład tylko w słuchawkach). Po zakończeniu kliknij „Stop”.');
+    setBanner('Nagrywanie… (podkład tylko w słuchawkach). Po zakończeniu podkładu nagranie zatrzyma się automatycznie.');
   }catch(e){
     alert('Brak dostępu do mikrofonu.'); log('BŁĄD mikrofon: '+e.message);
   }
 };
 
-$('btnStop').onclick = ()=>{
-  if(mediaRecorder && mediaRecorder.state==='recording'){
-    mediaRecorder.stop();
-    mediaRecorder.stream.getTracks().forEach(t=>t.stop());
-    $('btnStart').disabled = false;
-    $('btnStop').disabled = true;
-    try{ backing.pause(); }catch(_){}
-  }
-};
+$('btnStop').onclick = ()=> stopRecording('manual');
 
-$('btnDownload').onclick = ()=>{
-  if(!recordedBlob) return;
-  const a=document.createElement('a'); a.href=URL.createObjectURL(recordedBlob); a.download=fileName; a.click();
-};
+/* Wspólna ścieżka zatrzymania nagrania */
+function stopRecording(reason='manual'){
+  try{
+    // wyczyść timery bezpieczeństwa
+    clearMaxTimers();
+
+    if (isRecording && mediaRecorder && mediaRecorder.state === 'recording') {
+      mediaRecorder.stop();
+      mediaRecorder.stream.getTracks().forEach(t=>t.stop());
+    }
+  }catch(_){}
+
+  isRecording = false;
+  try { backing.pause(); } catch(_){}
+  $('btnStart').disabled = false;
+  $('btnStop').disabled = true;
+
+  if (reason === 'auto-end') {
+    setBanner('Nagranie zakończone automatycznie z końcem podkładu. Możesz „Wyślij” albo „Pobierz wokal”.');
+    log('Auto-Stop: koniec podkładu.');
+  } else if (reason === 'max-limit') {
+    setBanner('Nagranie zatrzymane (limit 7 min). Jeśli to błąd, skróć nagranie.');
+    log('Auto-Stop: limit 7 min.');
+  }
+}
+
+/* Reagujemy na koniec podkładu WYŁĄCZNIE podczas nagrywania */
+function onBackingEndedDuringRec(){
+  if (isRecording) stopRecording('auto-end');
+}
 
 /* ========= ODSŁUCH ========= */
 $('offsetMs').addEventListener('input', e=>{
@@ -302,7 +332,7 @@ $('btnAudition').onclick = ()=>{
 $('btnStopAud').onclick = ()=> stopAudition();
 
 player.addEventListener('ended', ()=> stopAudition());
-backing.addEventListener('ended', ()=> stopAudition());
+backing.addEventListener('ended', ()=> { if (!isRecording) stopAudition(); }); // normalny odsłuch
 player.addEventListener('pause', ()=> { if (!backing.paused) backing.pause(); stopAutoResync(); });
 
 function stopAudition(){
@@ -336,7 +366,32 @@ function resyncBackingToPlayer(){
 }
 function safePlay(elm){ elm.play().catch(()=>{}); }
 
+/* ========= BEZPIECZNIKI CZASU ========= */
+function startMaxTimers(){
+  clearMaxTimers();
+  // Ostrzeżenie 30s przed limitem
+  warnTimer = setTimeout(()=>{
+    if (isRecording) {
+      setBanner('Za ~30 sekund nagranie zatrzyma się (limit 7 min).');
+      log('Ostrzeżenie: zbliża się limit 7 min.');
+    }
+  }, Math.max(0, MAX_MS - WARN_BEFORE_MS));
+  // Twardy limit
+  maxTimer = setTimeout(()=>{
+    if (isRecording) stopRecording('max-limit');
+  }, MAX_MS);
+}
+function clearMaxTimers(){
+  if (warnTimer){ clearTimeout(warnTimer); warnTimer=null; }
+  if (maxTimer){ clearTimeout(maxTimer); maxTimer=null; }
+}
+
 /* ========= WYSYŁKA ========= */
+$('btnDownload').onclick = ()=>{
+  if(!recordedBlob) return;
+  const a=document.createElement('a'); a.href=URL.createObjectURL(recordedBlob); a.download=fileName; a.click();
+};
+
 $('btnSendAll').onclick = async ()=>{
   if(!recordedBlob){ alert('Najpierw nagraj.'); return; }
   try{
@@ -356,7 +411,7 @@ $('btnSendAll').onclick = async ()=>{
     }).then(r=>r.json());
     if(!up.ok) throw new Error(up.error || 'Upload failed');
 
-    $('fileIdSpan').textContent = up.fileId; $('fileIdLine').hidden = true; // trzymamy ukryte dla uczniów
+    $('fileIdSpan').textContent = up.fileId; $('fileIdLine').hidden = true; // trzymamy ukryte
     log(`Upload OK, fileId: ${up.fileId}`);
 
     // payload do SPM (z echem tytułu i podkładu)
@@ -370,7 +425,7 @@ $('btnSendAll').onclick = async ()=>{
       fileName, mimeType
     };
 
-    // zapis dodatkowych metadanych (jak było)
+    // (telemetria – Sheets) zostawiamy jak było
     log('Zapis do Sheets…');
     const m = await fetch(FN_URL, {
       method:'POST',
