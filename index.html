@@ -21,13 +21,31 @@
       .stack-sm{ flex-direction:column; }
     }
 
-    /* NAV grid: lewa kolumna – sterowanie podkładem; prawa – log */
+    /* NAV GRID: 2 kolumny (≥900px): nagłówki w 1. wierszu, treści w 2. wierszu */
     .nav-grid{
-      display:grid; gap:14px; align-items:start;
-      grid-template-columns: 1fr;
+      display:grid; gap:12px; align-items:start;
+      grid-template-columns: 1.2fr 0.8fr;
+      grid-template-areas:
+        "hl hr"
+        "bl br";
     }
-    @media (min-width:900px){
-      .nav-grid{ grid-template-columns: 1.2fr 0.8fr; }
+    .nav-head-left  { grid-area: hl; }
+    .nav-head-right { grid-area: hr; }
+    .nav-body-left  { grid-area: bl; }
+    .nav-body-right { grid-area: br; }
+
+    .nav-head-left h2,
+    .nav-head-right h2{ margin-top:0; }
+
+    @media (max-width:900px){
+      .nav-grid{
+        grid-template-columns: 1fr;
+        grid-template-areas:
+          "hl"
+          "bl"
+          "hr"
+          "br";
+      }
     }
 
     input[type="range"]{ width: min(420px, 90vw); }
@@ -55,7 +73,7 @@
     @keyframes blink { 50% { opacity:.38 } }
     .blink { animation: blink .9s linear infinite; }
 
-    /* Log compact */
+    /* Log */
     #log{ background:#0b0b0b; border:1px solid #202020; border-radius:12px; padding:12px; white-space:pre-wrap; }
     .log-wrap{ max-height:260px; overflow:auto; }
 
@@ -71,17 +89,18 @@
   </style>
 </head>
 <body>
-  <!-- Zmiana: start od Nagraj -->
+  <!-- Start od Nagraj -->
   <div id="banner">1) <b>Nagraj</b> → 2) Wyślij → 3) Wróć do SPM – Potwierdź wysyłkę i Zapisz</div>
 
   <h1>SPM – Studio nagrań</h1>
 
-  <!-- NAWIGACJA (bez numeru kroku) -->
+  <!-- NAWIGACJA: lewa – sterowanie podkładem, prawa – log; nagłówki w jednej linii -->
   <div class="section" id="navSection">
-    <h2>Nawigacja</h2>
     <div class="nav-grid">
-      <!-- kolumna lewa: podkład -->
-      <div>
+      <div class="nav-head-left"><h2>Nawigacja</h2></div>
+      <div class="nav-head-right"><h2>Log</h2></div>
+
+      <div class="nav-body-left">
         <div class="row" style="margin-top:6px">
           <label for="trackVol">Głośność podkładu</label>
           <input id="trackVol" type="range" min="0" max="1" step="0.01" value="0.7" />
@@ -98,9 +117,7 @@
         <div class="note">Podkład gra w słuchawkach podczas nagrywania. <b>Nie zapisuje się</b> w pliku — nagrywa się tylko mikrofon.</div>
       </div>
 
-      <!-- kolumna prawa: log -->
-      <div>
-        <h2 style="margin-top:0">Log</h2>
+      <div class="nav-body-right">
         <div class="log-wrap"><pre id="log"></pre></div>
       </div>
     </div>
@@ -157,8 +174,8 @@
 <script>
 /* ========= KONFIG ========= */
 const FN_URL = '/.netlify/functions/spm';
-const MAX_MS = 7 * 60 * 1000;      // twardy limit 7 min
-const WARN_BEFORE_MS = 30 * 1000;  // ostrzeżenie 30 s przed limitem
+const MAX_MS = 7 * 60 * 1000;
+const WARN_BEFORE_MS = 30 * 1000;
 
 const qs            = new URLSearchParams(location.search);
 const parentUrlRaw  = qs.get('parent') || '';
@@ -272,14 +289,12 @@ $('btnStart').onclick = async ()=>{
       log(`Nagranie gotowe. Czas ~ ${durationMs} ms; rozmiar ~ ${Math.round(recordedBlob.size/1024)} KB`);
     };
 
-    // AUTO-STOP: koniec podkładu podczas nagrywania
     backing.addEventListener('ended', onBackingEndedDuringRec);
     isRecording = true;
 
     try { if (backing.src) { backing.currentTime = 0; await backing.play(); } } catch(e) { log('Uwaga: podkład nie wystartował ('+e.message+').'); }
     mediaRecorder.start();
 
-    // Bezpieczniki czasu (awaryjnie)
     startMaxTimers();
 
     $('btnStart').disabled = true;
@@ -292,7 +307,6 @@ $('btnStart').onclick = async ()=>{
 
 $('btnStop').onclick = ()=> stopRecording('manual');
 
-/* Wspólna ścieżka zatrzymania nagrania */
 function stopRecording(reason='manual'){
   try{
     clearMaxTimers();
@@ -316,7 +330,6 @@ function stopRecording(reason='manual'){
   }
 }
 
-/* Reagujemy na koniec podkładu WYŁĄCZNIE podczas nagrywania */
 function onBackingEndedDuringRec(){
   if (isRecording) stopRecording('auto-end');
 }
@@ -343,7 +356,7 @@ $('btnAudition').onclick = ()=>{
 $('btnStopAud').onclick = ()=> stopAudition();
 
 player.addEventListener('ended', ()=> stopAudition());
-backing.addEventListener('ended', ()=> { if (!isRecording) stopAudition(); }); // normalny odsłuch
+backing.addEventListener('ended', ()=> { if (!isRecording) stopAudition(); });
 player.addEventListener('pause', ()=> { if (!backing.paused) backing.pause(); stopAutoResync(); });
 
 function stopAudition(){
