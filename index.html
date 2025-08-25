@@ -86,15 +86,31 @@
       padding:2px 8px; border-radius:999px; font-size:.78rem;
     }
     .step.active{ outline:2px solid #1e5e1f; outline-offset: 2px; }
+
+    /* ===== VU-meter (pasek mikrofonu) ===== */
+    .vu-wrap{
+      display:flex; align-items:flex-end; gap:8px;
+      height:68px; padding:8px 10px; border-radius:10px; border:1px solid #262626; background:#101010;
+    }
+    .vu-label{ font-size:.86rem; opacity:.85; min-width:88px; }
+    .vu-bar{
+      position:relative; width:14px; height:100%; border-radius:8px; background:#1f1f1f; overflow:hidden;
+    }
+    .vu-fill{
+      position:absolute; bottom:0; left:0; right:0; height:8%;
+      background: linear-gradient(180deg, #37d537 0%, #2ea62e 60%, #e0b02e 80%, #cc3a3a 100%);
+      border-radius:8px;
+      transition: height .06s linear;
+    }
+    .vu-num{ width:46px; font-variant-numeric: tabular-nums; text-align:right; opacity:.85; }
   </style>
 </head>
 <body>
-  <!-- Start od Nagraj -->
   <div id="banner">1) <b>Nagraj</b> → 2) Wyślij → 3) Wróć do SPM – Potwierdź wysyłkę i Zapisz</div>
 
   <h1>SPM – Studio nagrań</h1>
 
-  <!-- NAWIGACJA: lewa – sterowanie podkładem, prawa – log; nagłówki w jednej linii -->
+  <!-- NAWIGACJA -->
   <div class="section" id="navSection">
     <div class="nav-grid">
       <div class="nav-head-left"><h2>Nawigacja</h2></div>
@@ -127,10 +143,17 @@
   <div class="section step" id="step1" data-step="Krok 1">
     <h2>Nagrywanie</h2>
 
-    <div class="stack-sm" style="margin:6px 0 4px">
+    <div class="stack-sm" style="margin:6px 0 4px; align-items:center">
       <button id="btnStart" class="btn">Start</button>
       <button id="btnStop" class="btn secondary" disabled>Stop</button>
       <button id="btnDownload" class="btn secondary" disabled>Pobierz wokal</button>
+
+      <!-- ===== VU-meter obok przycisków ===== -->
+      <div class="vu-wrap" title="Poziom mikrofonu (live)">
+        <div class="vu-label">Mikrofon</div>
+        <div class="vu-bar"><div id="vuFill" class="vu-fill"></div></div>
+        <div id="vuNum" class="vu-num">-∞ dB</div>
+      </div>
     </div>
 
     <div class="row" style="margin-top:6px">
@@ -200,6 +223,10 @@ let offsetMs = 0, tempoPct = 0, resyncTimer = null, rafId = null, isAuditioning 
 let isRecording = false;
 let maxTimer = null, warnTimer = null;
 
+/* ===== VU-meter state ===== */
+let audioCtx = null, analyser = null, vuData = null, vuRAF = null;
+const vuFill = $('vuFill'), vuNum = $('vuNum');
+
 /* ========= UTIL ========= */
 function log(m){ $('log').textContent += m + '\n'; }
 function ts(){ return new Date().toISOString().replace(/[:.]/g,'-'); }
@@ -263,6 +290,48 @@ $('trackVol').addEventListener('input', e=>{
 backing.volume = parseFloat($('trackVol').value||'0.7');
 backing.preservesPitch = true; backing.mozPreservesPitch = true; backing.webkitPreservesPitch = true;
 
+/* ===== VU-meter helpers ===== */
+function startVU(stream){
+  try{
+    // Reuse if exists
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const src = audioCtx.createMediaStreamSource(stream);
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 1024;
+    analyser.smoothingTimeConstant = 0.85;
+    src.connect(analyser);
+    vuData = new Uint8Array(analyser.fftSize);
+
+    const loop = () => {
+      if (!analyser) return;
+      analyser.getByteTimeDomainData(vuData);
+      // Convert to normalized RMS 0..1
+      let sum = 0;
+      for (let i=0;i<vuData.length;i++){
+        const v = (vuData[i]-128)/128; // -1..1
+        sum += v*v;
+      }
+      const rms = Math.sqrt(sum / vuData.length); // 0..~1
+      const pct = Math.min(1, rms * 3.0); // agresywniej dla mowy
+      vuFill.style.height = Math.max(0.05, pct) * 100 + '%';
+      const db = rms>0 ? (20*Math.log10(rms)).toFixed(1) : '-∞';
+      vuNum.textContent = (db==='-∞' ? '-∞' : db+' dB');
+      vuRAF = requestAnimationFrame(loop);
+    };
+    cancelAnimationFrame(vuRAF);
+    vuRAF = requestAnimationFrame(loop);
+  }catch(e){
+    log('VU error: '+e.message);
+  }
+}
+function stopVU(){
+  try{ cancelAnimationFrame(vuRAF); }catch(_){}
+  vuRAF = null;
+  analyser = null;
+  vuFill.style.height = '8%';
+  vuNum.textContent = '-∞ dB';
+}
+
 /* ========= NAGRYWANIE ========= */
 $('btnStart').onclick = async ()=>{
   try{
@@ -287,7 +356,11 @@ $('btnStart').onclick = async ()=>{
       setBanner('Gotowe nagranie. Możesz odsłuchać, pobrać wokal albo „Wyślij”.');
       stepActive('step2');
       log(`Nagranie gotowe. Czas ~ ${durationMs} ms; rozmiar ~ ${Math.round(recordedBlob.size/1024)} KB`);
+      stopVU();
     };
+
+    // VU-meter start
+    startVU(micStream);
 
     backing.addEventListener('ended', onBackingEndedDuringRec);
     isRecording = true;
@@ -302,6 +375,7 @@ $('btnStart').onclick = async ()=>{
     setBanner('Nagrywanie… Po zakończeniu podkładu nagranie zatrzyma się automatycznie.');
   }catch(e){
     alert('Brak dostępu do mikrofonu.'); log('BŁĄD mikrofon: '+e.message);
+    stopVU();
   }
 };
 
@@ -320,6 +394,7 @@ function stopRecording(reason='manual'){
   try { backing.pause(); } catch(_){}
   $('btnStart').disabled = false;
   $('btnStop').disabled = true;
+  stopVU();
 
   if (reason === 'auto-end') {
     setBanner('Nagranie zakończone automatycznie z końcem podkładu. Możesz „Wyślij” albo „Pobierz wokal”.');
