@@ -8,8 +8,16 @@
     :root { color-scheme: dark; }
     * { box-sizing: border-box; }
     body { font-family: system-ui, Arial, sans-serif; margin: 16px; background:#0f0f0f; color:#f1f1f1; }
-    h1{ margin: 0 0 14px 0; font-size: 1.6rem; }
+    h1{ margin: 0; font-size: 1.6rem; line-height:1.1; }
     h2{ margin: 18px 0 10px; font-size: 1.2rem; }
+
+    /* HEADER z logo */
+    .brand{
+      display:flex; align-items:center; gap:14px;
+      padding:8px 0 14px 0;
+    }
+    .brand img{ height:64px; width:auto; display:block; }
+    .brand-sub{ opacity:.9; font-size:.95rem; margin-top:4px; }
 
     .section{ border:1px solid #262626; border-radius:12px; padding:14px; margin:14px 0; background:#141414; }
     .row{ display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
@@ -19,8 +27,10 @@
     @media (max-width:640px){
       .row{ flex-direction:column; align-items:flex-start; }
       .stack-sm{ flex-direction:column; }
+      .brand{ flex-direction:row; }
     }
 
+    /* NAV GRID */
     .nav-grid{
       display:grid; gap:12px; align-items:start;
       grid-template-columns: 1.2fr 0.8fr;
@@ -51,6 +61,7 @@
     .val, .time{ font-variant-numeric: tabular-nums; opacity:.9; }
     .time{ min-width:92px; text-align:right; }
 
+    /* buttons */
     .btn{
       display:inline-flex; align-items:center; justify-content:center;
       padding:10px 14px; border-radius:10px; border:0; background:#2e7d32; color:#fff;
@@ -66,13 +77,16 @@
 
     .note{ opacity:.85; font-size:.92rem; }
 
+    /* banner */
     #banner { border:1px solid #2a2a2a; padding:10px 12px; border-radius:10px; margin-bottom:12px; text-align:center; color:#eaeaea; background:#121212; }
     @keyframes blink { 50% { opacity:.38 } }
     .blink { animation: blink .9s linear infinite; }
 
+    /* Log */
     #log{ background:#0b0b0b; border:1px solid #202020; border-radius:12px; padding:12px; white-space:pre-wrap; }
     .log-wrap{ max-height:260px; overflow:auto; }
 
+    /* steps */
     .step { position:relative; }
     .step::before{
       content: attr(data-step);
@@ -82,25 +96,36 @@
     }
     .step.active{ outline:2px solid #1e5e1f; outline-offset: 2px; }
 
-    /* VU */
+    /* ===== VU-meter (POWIĘKSZONY + delikatnie czulszy) ===== */
     .vu-wrap{
       display:flex; align-items:flex-end; gap:8px;
-      height:68px; padding:8px 10px; border-radius:10px; border:1px solid #262626; background:#101010;
+      height:104px; /* było 68px */
+      padding:8px 10px; border-radius:10px; border:1px solid #262626; background:#101010;
     }
     .vu-label{ font-size:.86rem; opacity:.85; min-width:88px; }
-    .vu-bar{ position:relative; width:14px; height:100%; border-radius:8px; background:#1f1f1f; overflow:hidden; }
+    .vu-bar{
+      position:relative; width:16px; height:100%; border-radius:8px; background:#1f1f1f; overflow:hidden;
+    }
     .vu-fill{
       position:absolute; bottom:0; left:0; right:0; height:8%;
       background: linear-gradient(180deg, #37d537 0%, #2ea62e 60%, #e0b02e 80%, #cc3a3a 100%);
       border-radius:8px;
       transition: height .06s linear;
     }
-    .vu-num{ width:46px; font-variant-numeric: tabular-nums; text-align:right; opacity:.85; }
+    .vu-num{ width:56px; font-variant-numeric: tabular-nums; text-align:right; opacity:.85; }
   </style>
 </head>
 <body>
   <div id="banner">1) <b>Nagraj</b> → 2) Wyślij → 3) Wróć do SPM – Potwierdź wysyłkę i Zapisz</div>
-  <h1>SPM – Studio nagrań</h1>
+
+  <!-- NAGŁÓWEK z logo -->
+  <div class="brand">
+    <img src="logoSPM.png" alt="Logo Studio Piosenki Metro" />
+    <div>
+      <h1>SPM – Studio nagrań</h1>
+      <div class="brand-sub">Nagrywanie głosu z podkładem (czysty tor mikrofonu)</div>
+    </div>
+  </div>
 
   <!-- NAWIGACJA -->
   <div class="section" id="navSection">
@@ -147,6 +172,7 @@
       <button id="btnStop" class="btn secondary" disabled>Stop</button>
       <button id="btnDownload" class="btn secondary" disabled>Pobierz wokal</button>
 
+      <!-- ===== VU-meter ===== -->
       <div class="vu-wrap" title="Poziom mikrofonu (live)">
         <div class="vu-label">Mikrofon</div>
         <div class="vu-bar"><div id="vuFill" class="vu-fill"></div></div>
@@ -256,7 +282,7 @@ let student = { imie:'', nazwisko:'', email:'', miejscowosc:'', tytul:'', trackU
 /* ========= URZĄDZENIA ========= */
 async function initMics(){
   try{
-    // Wymaga zgody przeglądarki, więc najpierw „pusta” prośba o audio:
+    // wymaga zgody użytkownika – krótka prośba o audio:
     await navigator.mediaDevices.getUserMedia({ audio: true });
   }catch(_){}
   await listMics();
@@ -329,7 +355,7 @@ function startVU(stream){
     const src = audioCtx.createMediaStreamSource(stream);
     analyser = audioCtx.createAnalyser();
     analyser.fftSize = 1024;
-    analyser.smoothingTimeConstant = 0.65; // trochę „żywszy” VU
+    analyser.smoothingTimeConstant = 0.6; /* nieco żywszy */
     src.connect(analyser);
     vuData = (analyser.getFloatTimeDomainData ? new Float32Array(analyser.fftSize) : new Uint8Array(analyser.fftSize));
 
@@ -338,17 +364,17 @@ function startVU(stream){
       if (vuData instanceof Float32Array){
         analyser.getFloatTimeDomainData(vuData);
         let sum = 0; for (let i=0;i<vuData.length;i++){ const v = vuData[i]; sum += v*v; }
-        const rms = Math.sqrt(sum / vuData.length); // 0..~1
-        const pct = Math.min(1, rms * 3.0);
-        vuFill.style.height = Math.max(0.05, pct) * 100 + '%';
+        const rms = Math.sqrt(sum / vuData.length);            // 0..~1
+        const pct = Math.min(1, rms * 4.0);                    // było ×3.0 → czulszy
+        vuFill.style.height = Math.max(0.04, pct) * 100 + '%';
         const db = rms>0 ? (20*Math.log10(rms)).toFixed(1) : '-∞';
         vuNum.textContent = (db==='-∞' ? '-∞' : db+' dB');
       } else {
         analyser.getByteTimeDomainData(vuData);
         let sum = 0; for (let i=0;i<vuData.length;i++){ const v = (vuData[i]-128)/128; sum += v*v; }
         const rms = Math.sqrt(sum / vuData.length);
-        const pct = Math.min(1, rms * 3.0);
-        vuFill.style.height = Math.max(0.05, pct) * 100 + '%';
+        const pct = Math.min(1, rms * 4.0);                    // było ×3.0 → czulszy
+        vuFill.style.height = Math.max(0.04, pct) * 100 + '%';
         const db = rms>0 ? (20*Math.log10(rms)).toFixed(1) : '-∞';
         vuNum.textContent = (db==='-∞' ? '-∞' : db+' dB');
       }
@@ -368,7 +394,7 @@ function stopVU(){
   vuNum.textContent = '-∞ dB';
 }
 
-/* ========= KONSTRUKCJA CONSTRAINTS ========= */
+/* ========= CONSTRAINTS ========= */
 function buildAudioConstraints(){
   const deviceId = micSelect.value || undefined;
   const base = {
@@ -386,7 +412,7 @@ function buildAudioConstraints(){
 function logSupportedConstraints(){
   try{
     const sc = navigator.mediaDevices.getSupportedConstraints?.() || {};
-    log('Supported constraints: ' + Object.keys(sc).filter(k=>sc[k]).join(', ') || '(brak)');
+    log('Supported constraints: ' + (Object.keys(sc).filter(k=>sc[k]).join(', ') || '(brak)'));
   }catch(_){}
 }
 
@@ -395,7 +421,6 @@ let liveStream = null;
 
 $('btnStart').onclick = async ()=>{
   try{
-    // Zatrzymaj poprzedni stream (jeśli był)
     if (liveStream) { try { liveStream.getTracks().forEach(t=>t.stop()); } catch(_){} liveStream = null; }
 
     const constraints = buildAudioConstraints();
@@ -404,7 +429,6 @@ $('btnStart').onclick = async ()=>{
     const micStream = await navigator.mediaDevices.getUserMedia(constraints);
     liveStream = micStream;
 
-    // Podgląd ustawień realnych (co faktycznie dała przeglądarka)
     try{
       const track = micStream.getAudioTracks?.()[0];
       if (track){
@@ -436,7 +460,6 @@ $('btnStart').onclick = async ()=>{
       $('btnAudition').disabled = false;
       $('btnStopAud').disabled  = true;
 
-      // Sanity: bitrate z pliku
       const kbps = durationMs>0 ? Math.round((recordedBlob.size * 8) / (durationMs/1000) / 1000) : 0;
       log(`Nagranie gotowe. Czas ~ ${durationMs} ms; rozmiar ~ ${Math.round(recordedBlob.size/1024)} KB; bitrate ~ ${kbps} kbps`);
       if (kbps < 48) log('Uwaga: niski bitrate – możliwe artefakty mowy. Rozważ wyższy audioBitsPerSecond lub inną przeglądarkę.');
@@ -482,6 +505,14 @@ function stopRecording(reason='manual'){
   $('btnStart').disabled = false;
   $('btnStop').disabled = true;
   stopVU();
+
+  if (reason === 'auto-end') {
+    setBanner('Nagranie zakończone automatycznie z końcem podkładu. Możesz „Wyślij” albo „Pobierz wokal”.');
+    log('Auto-Stop: koniec podkładu.');
+  } else if (reason === 'max-limit') {
+    setBanner('Nagranie zatrzymane (limit 7 min). Jeśli to błąd, skróć nagranie.');
+    log('Auto-Stop: limit 7 min.');
+  }
 }
 
 function onBackingEndedDuringRec(){
