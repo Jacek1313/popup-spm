@@ -96,11 +96,12 @@
     }
     .step.active{ outline:2px solid #1e5e1f; outline-offset: 2px; }
 
-    /* ===== VU-meter (POWIĘKSZONY + delikatnie czulszy) ===== */
+    /* ===== VU-meter (powiększony + czulszy) ===== */
     .vu-wrap{
       display:flex; align-items:flex-end; gap:8px;
-      height:104px; /* było 68px */
+      height:104px;
       padding:8px 10px; border-radius:10px; border:1px solid #262626; background:#101010;
+      position:relative;
     }
     .vu-label{ font-size:.86rem; opacity:.85; min-width:88px; }
     .vu-bar{
@@ -113,14 +114,33 @@
       transition: height .06s linear;
     }
     .vu-num{ width:56px; font-variant-numeric: tabular-nums; text-align:right; opacity:.85; }
+
+    /* ==== PRZESTER – lampka + alert + licznik ==== */
+    .clip-indicator{
+      position:absolute; top:8px; right:8px;
+      width:14px; height:14px; border-radius:50%;
+      background:#400; border:1px solid #800; opacity:0.4; transition:opacity .08s, background .08s;
+    }
+    .clip-indicator.active{ background:#f00; opacity:1; }
+
+    .clip-line{
+      display:flex; align-items:center; gap:10px; margin-top:6px;
+      min-height:22px;
+    }
+    .clip-alert{
+      font-size:.9rem; color:#f66; display:none;
+    }
+    .clip-counter{
+      font-size:.85rem; opacity:.85;
+    }
   </style>
 </head>
 <body>
   <div id="banner">1) <b>Nagraj</b> → 2) Wyślij → 3) Wróć do SPM – Potwierdź wysyłkę i Zapisz</div>
 
-  <!-- NAGŁÓWEK z logo -->
+  <!-- NAGŁÓWEK z logo (opcjonalny) -->
   <div class="brand">
-    <img src="logoSPM.png" alt="Logo Studio Piosenki Metro" />
+    <img src="logoSPM.png" alt="Logo Studio Piosenki Metro" onerror="this.style.display='none'" />
     <div>
       <h1>SPM – Studio nagrań</h1>
       <div class="brand-sub">Nagrywanie głosu z podkładem (czysty tor mikrofonu)</div>
@@ -172,12 +192,19 @@
       <button id="btnStop" class="btn secondary" disabled>Stop</button>
       <button id="btnDownload" class="btn secondary" disabled>Pobierz wokal</button>
 
-      <!-- ===== VU-meter ===== -->
+      <!-- VU + PRZESTER -->
       <div class="vu-wrap" title="Poziom mikrofonu (live)">
         <div class="vu-label">Mikrofon</div>
         <div class="vu-bar"><div id="vuFill" class="vu-fill"></div></div>
         <div id="vuNum" class="vu-num">-∞ dB</div>
+        <div id="clipLamp" class="clip-indicator" aria-label="Przester"></div>
       </div>
+    </div>
+
+    <!-- Linia alertu i licznika przesterów -->
+    <div class="clip-line">
+      <div id="clipAlert" class="clip-alert">Wykryto przester: <b>odsuń się od mikrofonu lub go ścisz</b>.</div>
+      <div id="clipCounter" class="clip-counter">Przestery: 0</div>
     </div>
 
     <div class="row" style="margin-top:6px">
@@ -250,9 +277,11 @@ let offsetMs = 0, tempoPct = 0, resyncTimer = null, rafId = null, isAuditioning 
 let isRecording = false;
 let maxTimer = null, warnTimer = null;
 
-/* ===== VU-meter state ===== */
+/* ===== VU-meter + PRZESTER state ===== */
 let audioCtx = null, analyser = null, vuData = null, vuRAF = null;
 const vuFill = $('vuFill'), vuNum = $('vuNum');
+const clipLamp = $('clipLamp'), clipAlert = $('clipAlert'), clipCounter = $('clipCounter');
+let clipCount = 0, clipAlertTimer = null, lastClipTs = 0;
 
 /* ========= UTIL ========= */
 function log(m){ $('log').textContent += m + '\n'; }
@@ -281,10 +310,7 @@ let student = { imie:'', nazwisko:'', email:'', miejscowosc:'', tytul:'', trackU
 
 /* ========= URZĄDZENIA ========= */
 async function initMics(){
-  try{
-    // wymaga zgody użytkownika – krótka prośba o audio:
-    await navigator.mediaDevices.getUserMedia({ audio: true });
-  }catch(_){}
+  try{ await navigator.mediaDevices.getUserMedia({ audio: true }); }catch(_){}
   await listMics();
 }
 async function listMics(){
@@ -348,36 +374,60 @@ $('trackVol').addEventListener('input', e=>{
 backing.volume = parseFloat($('trackVol').value||'0.7');
 backing.preservesPitch = true; backing.mozPreservesPitch = true; backing.webkitPreservesPitch = true;
 
-/* ===== VU-meter helpers ===== */
+/* ===== VU + PRZESTER ===== */
 function startVU(stream){
   try{
     audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
     const src = audioCtx.createMediaStreamSource(stream);
     analyser = audioCtx.createAnalyser();
     analyser.fftSize = 1024;
-    analyser.smoothingTimeConstant = 0.6; /* nieco żywszy */
+    analyser.smoothingTimeConstant = 0.6; // żywszy odczyt
     src.connect(analyser);
     vuData = (analyser.getFloatTimeDomainData ? new Float32Array(analyser.fftSize) : new Uint8Array(analyser.fftSize));
 
     const loop = () => {
       if (!analyser) return;
+
+      let clippedFrame = false, sum = 0;
       if (vuData instanceof Float32Array){
         analyser.getFloatTimeDomainData(vuData);
-        let sum = 0; for (let i=0;i<vuData.length;i++){ const v = vuData[i]; sum += v*v; }
-        const rms = Math.sqrt(sum / vuData.length);            // 0..~1
-        const pct = Math.min(1, rms * 4.0);                    // było ×3.0 → czulszy
-        vuFill.style.height = Math.max(0.04, pct) * 100 + '%';
-        const db = rms>0 ? (20*Math.log10(rms)).toFixed(1) : '-∞';
-        vuNum.textContent = (db==='-∞' ? '-∞' : db+' dB');
+        for (let i=0;i<vuData.length;i++){
+          const v = vuData[i];
+          sum += v*v;
+          if (v >= 1.0 || v <= -1.0) clippedFrame = true;
+        }
       } else {
         analyser.getByteTimeDomainData(vuData);
-        let sum = 0; for (let i=0;i<vuData.length;i++){ const v = (vuData[i]-128)/128; sum += v*v; }
-        const rms = Math.sqrt(sum / vuData.length);
-        const pct = Math.min(1, rms * 4.0);                    // było ×3.0 → czulszy
-        vuFill.style.height = Math.max(0.04, pct) * 100 + '%';
-        const db = rms>0 ? (20*Math.log10(rms)).toFixed(1) : '-∞';
-        vuNum.textContent = (db==='-∞' ? '-∞' : db+' dB');
+        for (let i=0;i<vuData.length;i++){
+          const v = (vuData[i]-128)/128;
+          sum += v*v;
+          if (v >= 1.0 || v <= -1.0) clippedFrame = true;
+        }
       }
+      const rms = Math.sqrt(sum / vuData.length);
+      const pct = Math.min(1, rms * 4.0); // nieco czulszy
+      vuFill.style.height = Math.max(0.05, pct) * 100 + '%';
+      const db = rms>0 ? (20*Math.log10(rms)).toFixed(1) : '-∞';
+      vuNum.textContent = (db==='-∞' ? '-∞' : db+' dB');
+
+      // Lampka migająca „on-line”
+      if (clippedFrame){
+        clipLamp.classList.add('active');
+
+        // licznik z lekkim odszumieniem (min przerwa 120 ms między zliczeniami)
+        const now = performance.now();
+        if (now - lastClipTs > 120){
+          clipCount++;
+          clipCounter.textContent = 'Przestery: ' + clipCount;
+          lastClipTs = now;
+        }
+
+        // komunikat ~2 s po ostatnim przesterze
+        showClipAlert();
+      } else {
+        clipLamp.classList.remove('active');
+      }
+
       vuRAF = requestAnimationFrame(loop);
     };
     cancelAnimationFrame(vuRAF);
@@ -392,6 +442,21 @@ function stopVU(){
   analyser = null;
   vuFill.style.height = '8%';
   vuNum.textContent = '-∞ dB';
+  // zresetuj wskaźniki wizualne
+  clipLamp.classList.remove('active');
+  hideClipAlert(true);
+  clipCount = 0; clipCounter.textContent = 'Przestery: 0';
+  lastClipTs = 0;
+}
+
+function showClipAlert(){
+  clipAlert.style.display = 'block';
+  try{ clearTimeout(clipAlertTimer); }catch(_){}
+  clipAlertTimer = setTimeout(()=> hideClipAlert(), 2000);
+}
+function hideClipAlert(force){
+  if (force){ clipAlert.style.display = 'none'; return; }
+  clipAlert.style.display = 'none';
 }
 
 /* ========= CONSTRAINTS ========= */
@@ -421,6 +486,9 @@ let liveStream = null;
 
 $('btnStart').onclick = async ()=>{
   try{
+    // reset wskaźników przesteru
+    stopVU();
+
     if (liveStream) { try { liveStream.getTracks().forEach(t=>t.stop()); } catch(_){} liveStream = null; }
 
     const constraints = buildAudioConstraints();
@@ -429,6 +497,7 @@ $('btnStart').onclick = async ()=>{
     const micStream = await navigator.mediaDevices.getUserMedia(constraints);
     liveStream = micStream;
 
+    // Podgląd realnych ustawień
     try{
       const track = micStream.getAudioTracks?.()[0];
       if (track){
@@ -469,7 +538,7 @@ $('btnStart').onclick = async ()=>{
       stopVU();
     };
 
-    // VU start
+    // VU start (live)
     startVU(micStream);
 
     backing.addEventListener('ended', onBackingEndedDuringRec);
