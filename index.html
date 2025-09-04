@@ -21,7 +21,6 @@
       .stack-sm{ flex-direction:column; }
     }
 
-    /* NAV GRID: 2 kolumny (≥900px): nagłówki w 1. wierszu, treści w 2. wierszu */
     .nav-grid{
       display:grid; gap:12px; align-items:start;
       grid-template-columns: 1.2fr 0.8fr;
@@ -52,7 +51,6 @@
     .val, .time{ font-variant-numeric: tabular-nums; opacity:.9; }
     .time{ min-width:92px; text-align:right; }
 
-    /* buttons (shared for <button> and <a>) */
     .btn{
       display:inline-flex; align-items:center; justify-content:center;
       padding:10px 14px; border-radius:10px; border:0; background:#2e7d32; color:#fff;
@@ -68,16 +66,13 @@
 
     .note{ opacity:.85; font-size:.92rem; }
 
-    /* banner */
     #banner { border:1px solid #2a2a2a; padding:10px 12px; border-radius:10px; margin-bottom:12px; text-align:center; color:#eaeaea; background:#121212; }
     @keyframes blink { 50% { opacity:.38 } }
     .blink { animation: blink .9s linear infinite; }
 
-    /* Log */
     #log{ background:#0b0b0b; border:1px solid #202020; border-radius:12px; padding:12px; white-space:pre-wrap; }
     .log-wrap{ max-height:260px; overflow:auto; }
 
-    /* steps (soft guidance) */
     .step { position:relative; }
     .step::before{
       content: attr(data-step);
@@ -87,15 +82,13 @@
     }
     .step.active{ outline:2px solid #1e5e1f; outline-offset: 2px; }
 
-    /* ===== VU-meter (pasek mikrofonu) ===== */
+    /* VU */
     .vu-wrap{
       display:flex; align-items:flex-end; gap:8px;
       height:68px; padding:8px 10px; border-radius:10px; border:1px solid #262626; background:#101010;
     }
     .vu-label{ font-size:.86rem; opacity:.85; min-width:88px; }
-    .vu-bar{
-      position:relative; width:14px; height:100%; border-radius:8px; background:#1f1f1f; overflow:hidden;
-    }
+    .vu-bar{ position:relative; width:14px; height:100%; border-radius:8px; background:#1f1f1f; overflow:hidden; }
     .vu-fill{
       position:absolute; bottom:0; left:0; right:0; height:8%;
       background: linear-gradient(180deg, #37d537 0%, #2ea62e 60%, #e0b02e 80%, #cc3a3a 100%);
@@ -107,7 +100,6 @@
 </head>
 <body>
   <div id="banner">1) <b>Nagraj</b> → 2) Wyślij → 3) Wróć do SPM – Potwierdź wysyłkę i Zapisz</div>
-
   <h1>SPM – Studio nagrań</h1>
 
   <!-- NAWIGACJA -->
@@ -129,6 +121,13 @@
           <span id="backingTime" class="time">0:00 / 0:00</span>
         </div>
 
+        <!-- Wybór mikrofonu -->
+        <div class="row" style="margin-top:10px">
+          <label for="micSelect">Mikrofon</label>
+          <select id="micSelect" style="min-width:260px"></select>
+          <button id="btnRefreshMics" class="btn secondary">Odśwież listę</button>
+        </div>
+
         <audio id="backing" preload="auto" style="display:none"></audio>
         <div class="note">Podkład gra w słuchawkach podczas nagrywania. <b>Nie zapisuje się</b> w pliku — nagrywa się tylko mikrofon.</div>
       </div>
@@ -148,7 +147,6 @@
       <button id="btnStop" class="btn secondary" disabled>Stop</button>
       <button id="btnDownload" class="btn secondary" disabled>Pobierz wokal</button>
 
-      <!-- ===== VU-meter obok przycisków ===== -->
       <div class="vu-wrap" title="Poziom mikrofonu (live)">
         <div class="vu-label">Mikrofon</div>
         <div class="vu-bar"><div id="vuFill" class="vu-fill"></div></div>
@@ -207,7 +205,7 @@ const PARENT_URL    = parentUrlRaw || '';
 
 /* ========= STAN ========= */
 let mediaRecorder, chunks = [], recordedBlob = null, startedAt = 0, durationMs = 0;
-let fileName = '', mimeType = 'audio/webm';
+let fileName = '', mimeType = 'audio/webm;codecs=opus';
 let metaToSend = null;
 
 const $ = id => document.getElementById(id);
@@ -218,6 +216,9 @@ const playerSeek  = $('playerSeek');
 const backingTime = $('backingTime');
 const playerTime  = $('playerTime');
 const banner = $('banner');
+
+const micSelect = $('micSelect');
+const btnRefreshMics = $('btnRefreshMics');
 
 let offsetMs = 0, tempoPct = 0, resyncTimer = null, rafId = null, isAuditioning = false;
 let isRecording = false;
@@ -249,7 +250,38 @@ let student = { imie:'', nazwisko:'', email:'', miejscowosc:'', tytul:'', trackU
   if (student.trackUrl) { backing.src = student.trackUrl; backing.load(); log('Podkład ustawiony (z SPM).'); }
   setBanner('1) Nagraj → 2) Wyślij → 3) Wróć do SPM – Potwierdź wysyłkę i Zapisz');
   stepActive('step1');
+  initMics();
 })();
+
+/* ========= URZĄDZENIA ========= */
+async function initMics(){
+  try{
+    // Wymaga zgody przeglądarki, więc najpierw „pusta” prośba o audio:
+    await navigator.mediaDevices.getUserMedia({ audio: true });
+  }catch(_){}
+  await listMics();
+}
+async function listMics(){
+  try{
+    const devs = await navigator.mediaDevices.enumerateDevices();
+    const mics = devs.filter(d => d.kind === 'audioinput');
+    micSelect.innerHTML = '';
+    mics.forEach((d, i) => {
+      const opt = document.createElement('option');
+      opt.value = d.deviceId;
+      opt.textContent = d.label || `Mikrofon ${i+1}`;
+      micSelect.appendChild(opt);
+    });
+    if (!mics.length){
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = 'Brak mikrofonów';
+      micSelect.appendChild(opt);
+    }
+    log(`Mikrofony: ${mics.map(d=>d.label||d.deviceId).join(' | ') || '(brak)'}`);
+  }catch(e){ log('enumerateDevices error: '+e.message); }
+}
+btnRefreshMics.onclick = listMics;
 
 /* ========= PROGRESS ========= */
 function refreshProgress(){
@@ -293,29 +325,33 @@ backing.preservesPitch = true; backing.mozPreservesPitch = true; backing.webkitP
 /* ===== VU-meter helpers ===== */
 function startVU(stream){
   try{
-    // Reuse if exists
-    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
     const src = audioCtx.createMediaStreamSource(stream);
     analyser = audioCtx.createAnalyser();
     analyser.fftSize = 1024;
-    analyser.smoothingTimeConstant = 0.85;
+    analyser.smoothingTimeConstant = 0.65; // trochę „żywszy” VU
     src.connect(analyser);
-    vuData = new Uint8Array(analyser.fftSize);
+    vuData = (analyser.getFloatTimeDomainData ? new Float32Array(analyser.fftSize) : new Uint8Array(analyser.fftSize));
 
     const loop = () => {
       if (!analyser) return;
-      analyser.getByteTimeDomainData(vuData);
-      // Convert to normalized RMS 0..1
-      let sum = 0;
-      for (let i=0;i<vuData.length;i++){
-        const v = (vuData[i]-128)/128; // -1..1
-        sum += v*v;
+      if (vuData instanceof Float32Array){
+        analyser.getFloatTimeDomainData(vuData);
+        let sum = 0; for (let i=0;i<vuData.length;i++){ const v = vuData[i]; sum += v*v; }
+        const rms = Math.sqrt(sum / vuData.length); // 0..~1
+        const pct = Math.min(1, rms * 3.0);
+        vuFill.style.height = Math.max(0.05, pct) * 100 + '%';
+        const db = rms>0 ? (20*Math.log10(rms)).toFixed(1) : '-∞';
+        vuNum.textContent = (db==='-∞' ? '-∞' : db+' dB');
+      } else {
+        analyser.getByteTimeDomainData(vuData);
+        let sum = 0; for (let i=0;i<vuData.length;i++){ const v = (vuData[i]-128)/128; sum += v*v; }
+        const rms = Math.sqrt(sum / vuData.length);
+        const pct = Math.min(1, rms * 3.0);
+        vuFill.style.height = Math.max(0.05, pct) * 100 + '%';
+        const db = rms>0 ? (20*Math.log10(rms)).toFixed(1) : '-∞';
+        vuNum.textContent = (db==='-∞' ? '-∞' : db+' dB');
       }
-      const rms = Math.sqrt(sum / vuData.length); // 0..~1
-      const pct = Math.min(1, rms * 3.0); // agresywniej dla mowy
-      vuFill.style.height = Math.max(0.05, pct) * 100 + '%';
-      const db = rms>0 ? (20*Math.log10(rms)).toFixed(1) : '-∞';
-      vuNum.textContent = (db==='-∞' ? '-∞' : db+' dB');
       vuRAF = requestAnimationFrame(loop);
     };
     cancelAnimationFrame(vuRAF);
@@ -332,13 +368,60 @@ function stopVU(){
   vuNum.textContent = '-∞ dB';
 }
 
+/* ========= KONSTRUKCJA CONSTRAINTS ========= */
+function buildAudioConstraints(){
+  const deviceId = micSelect.value || undefined;
+  const base = {
+    echoCancellation: false,
+    noiseSuppression: false,
+    autoGainControl: false,
+    channelCount: 1,
+    sampleRate: 48000,
+    sampleSize: 16,
+    latency: 0
+  };
+  const c = deviceId ? { deviceId: { exact: deviceId }, ...base } : base;
+  return { audio: c };
+}
+function logSupportedConstraints(){
+  try{
+    const sc = navigator.mediaDevices.getSupportedConstraints?.() || {};
+    log('Supported constraints: ' + Object.keys(sc).filter(k=>sc[k]).join(', ') || '(brak)');
+  }catch(_){}
+}
+
 /* ========= NAGRYWANIE ========= */
+let liveStream = null;
+
 $('btnStart').onclick = async ()=>{
   try{
-    const micStream = await navigator.mediaDevices.getUserMedia({audio:true});
+    // Zatrzymaj poprzedni stream (jeśli był)
+    if (liveStream) { try { liveStream.getTracks().forEach(t=>t.stop()); } catch(_){} liveStream = null; }
+
+    const constraints = buildAudioConstraints();
+    logSupportedConstraints();
+    log('Proszę o mikrofon (surowy tor)…');
+    const micStream = await navigator.mediaDevices.getUserMedia(constraints);
+    liveStream = micStream;
+
+    // Podgląd ustawień realnych (co faktycznie dała przeglądarka)
+    try{
+      const track = micStream.getAudioTracks?.()[0];
+      if (track){
+        const s = track.getSettings?.() || {};
+        log('Ustawienia wejścia: ' + JSON.stringify({
+          deviceId: s.deviceId, channelCount: s.channelCount,
+          sampleRate: s.sampleRate, sampleSize: s.sampleSize,
+          echoCancellation: s.echoCancellation, noiseSuppression: s.noiseSuppression, autoGainControl: s.autoGainControl
+        }));
+      }
+    }catch(_){}
+
     chunks = []; recordedBlob = null; durationMs = 0; startedAt = Date.now();
 
-    mediaRecorder = new MediaRecorder(micStream, {mimeType});
+    const recOpts = { mimeType, audioBitsPerSecond: 128000 };
+    mediaRecorder = new MediaRecorder(micStream, recOpts);
+
     mediaRecorder.ondataavailable = e => { if(e.data && e.data.size) chunks.push(e.data); };
     mediaRecorder.onstop = ()=>{
       durationMs = Date.now() - startedAt;
@@ -353,13 +436,17 @@ $('btnStart').onclick = async ()=>{
       $('btnAudition').disabled = false;
       $('btnStopAud').disabled  = true;
 
+      // Sanity: bitrate z pliku
+      const kbps = durationMs>0 ? Math.round((recordedBlob.size * 8) / (durationMs/1000) / 1000) : 0;
+      log(`Nagranie gotowe. Czas ~ ${durationMs} ms; rozmiar ~ ${Math.round(recordedBlob.size/1024)} KB; bitrate ~ ${kbps} kbps`);
+      if (kbps < 48) log('Uwaga: niski bitrate – możliwe artefakty mowy. Rozważ wyższy audioBitsPerSecond lub inną przeglądarkę.');
+
       setBanner('Gotowe nagranie. Możesz odsłuchać, pobrać wokal albo „Wyślij”.');
       stepActive('step2');
-      log(`Nagranie gotowe. Czas ~ ${durationMs} ms; rozmiar ~ ${Math.round(recordedBlob.size/1024)} KB`);
       stopVU();
     };
 
-    // VU-meter start
+    // VU start
     startVU(micStream);
 
     backing.addEventListener('ended', onBackingEndedDuringRec);
@@ -374,7 +461,7 @@ $('btnStart').onclick = async ()=>{
     $('btnStop').disabled = false;
     setBanner('Nagrywanie… Po zakończeniu podkładu nagranie zatrzyma się automatycznie.');
   }catch(e){
-    alert('Brak dostępu do mikrofonu.'); log('BŁĄD mikrofon: '+e.message);
+    alert('Brak lub zablokowany dostęp do mikrofonu.'); log('BŁĄD mikrofon: '+e.message);
     stopVU();
   }
 };
@@ -395,14 +482,6 @@ function stopRecording(reason='manual'){
   $('btnStart').disabled = false;
   $('btnStop').disabled = true;
   stopVU();
-
-  if (reason === 'auto-end') {
-    setBanner('Nagranie zakończone automatycznie z końcem podkładu. Możesz „Wyślij” albo „Pobierz wokal”.');
-    log('Auto-Stop: koniec podkładu.');
-  } else if (reason === 'max-limit') {
-    setBanner('Nagranie zatrzymane (limit 7 min). Jeśli to błąd, skróć nagranie.');
-    log('Auto-Stop: limit 7 min.');
-  }
 }
 
 function onBackingEndedDuringRec(){
