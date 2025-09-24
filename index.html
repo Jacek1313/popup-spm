@@ -1,4 +1,4 @@
-<!doctype html>
+<!doctype html> 
 <html lang="pl">
 <head>
   <meta charset="utf-8" />
@@ -8,8 +8,16 @@
     :root { color-scheme: dark; }
     * { box-sizing: border-box; }
     body { font-family: system-ui, Arial, sans-serif; margin: 16px; background:#0f0f0f; color:#f1f1f1; }
-    h1{ margin: 0 0 14px 0; font-size: 1.6rem; }
+    h1{ margin: 0; font-size: 1.6rem; line-height:1.1; }
     h2{ margin: 18px 0 10px; font-size: 1.2rem; }
+
+    /* HEADER z logo */
+    .brand{
+      display:flex; align-items:center; gap:14px;
+      padding:8px 0 14px 0;
+    }
+    .brand img{ height:64px; width:auto; display:block; }
+    .brand-sub{ opacity:.9; font-size:.95rem; margin-top:4px; }
 
     .section{ border:1px solid #262626; border-radius:12px; padding:14px; margin:14px 0; background:#141414; }
     .row{ display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
@@ -19,9 +27,10 @@
     @media (max-width:640px){
       .row{ flex-direction:column; align-items:flex-start; }
       .stack-sm{ flex-direction:column; }
+      .brand{ flex-direction:row; }
     }
 
-    /* NAV GRID: 2 kolumny (≥900px): nagłówki w 1. wierszu, treści w 2. wierszu */
+    /* NAV GRID */
     .nav-grid{
       display:grid; gap:12px; align-items:start;
       grid-template-columns: 1.2fr 0.8fr;
@@ -52,7 +61,7 @@
     .val, .time{ font-variant-numeric: tabular-nums; opacity:.9; }
     .time{ min-width:92px; text-align:right; }
 
-    /* buttons (shared for <button> and <a>) */
+    /* buttons */
     .btn{
       display:inline-flex; align-items:center; justify-content:center;
       padding:10px 14px; border-radius:10px; border:0; background:#2e7d32; color:#fff;
@@ -77,7 +86,7 @@
     #log{ background:#0b0b0b; border:1px solid #202020; border-radius:12px; padding:12px; white-space:pre-wrap; }
     .log-wrap{ max-height:260px; overflow:auto; }
 
-    /* steps (soft guidance) */
+    /* steps */
     .step { position:relative; }
     .step::before{
       content: attr(data-step);
@@ -86,15 +95,59 @@
       padding:2px 8px; border-radius:999px; font-size:.78rem;
     }
     .step.active{ outline:2px solid #1e5e1f; outline-offset: 2px; }
+
+    /* ===== VU-meter (powiększony + czulszy) ===== */
+    .vu-wrap{
+      display:flex; align-items:flex-end; gap:8px;
+      height:104px;
+      padding:8px 10px; border-radius:10px; border:1px solid #262626; background:#101010;
+      position:relative;
+    }
+    .vu-label{ font-size:.86rem; opacity:.85; min-width:88px; }
+    .vu-bar{
+      position:relative; width:16px; height:100%; border-radius:8px; background:#1f1f1f; overflow:hidden;
+    }
+    .vu-fill{
+      position:absolute; bottom:0; left:0; right:0; height:8%;
+      background: linear-gradient(180deg, #37d537 0%, #2ea62e 60%, #e0b02e 80%, #cc3a3a 100%);
+      border-radius:8px;
+      transition: height .06s linear;
+    }
+    .vu-num{ width:56px; font-variant-numeric: tabular-nums; text-align:right; opacity:.85; }
+
+    /* ==== PRZESTER – lampka + alert + licznik ==== */
+    .clip-indicator{
+      position:absolute; top:8px; right:8px;
+      width:14px; height:14px; border-radius:50%;
+      background:#400; border:1px solid #800; opacity:0.4; transition:opacity .08s, background .08s;
+    }
+    .clip-indicator.active{ background:#f00; opacity:1; }
+
+    .clip-line{
+      display:flex; align-items:center; gap:10px; margin-top:6px;
+      min-height:22px;
+    }
+    .clip-alert{
+      font-size:.9rem; color:#f66; display:none;
+    }
+    .clip-counter{
+      font-size:.85rem; opacity:.85;
+    }
   </style>
 </head>
 <body>
-  <!-- Start od Nagraj -->
   <div id="banner">1) <b>Nagraj</b> → 2) Wyślij → 3) Wróć do SPM – Potwierdź wysyłkę i Zapisz</div>
 
-  <h1>SPM – Studio nagrań</h1>
+  <!-- NAGŁÓWEK z logo (opcjonalny) -->
+  <div class="brand">
+    <img src="logoSPM.png" alt="Logo Studio Piosenki Metro" onerror="this.style.display='none'" />
+    <div>
+      <h1>SPM – Studio nagrań</h1>
+      <div class="brand-sub">Nagrywanie głosu z podkładem (czysty tor mikrofonu)</div>
+    </div>
+  </div>
 
-  <!-- NAWIGACJA: lewa – sterowanie podkładem, prawa – log; nagłówki w jednej linii -->
+  <!-- NAWIGACJA -->
   <div class="section" id="navSection">
     <div class="nav-grid">
       <div class="nav-head-left"><h2>Nawigacja</h2></div>
@@ -113,6 +166,13 @@
           <span id="backingTime" class="time">0:00 / 0:00</span>
         </div>
 
+        <!-- Wybór mikrofonu -->
+        <div class="row" style="margin-top:10px">
+          <label for="micSelect">Mikrofon</label>
+          <select id="micSelect" style="min-width:260px"></select>
+          <button id="btnRefreshMics" class="btn secondary">Odśwież listę</button>
+        </div>
+
         <audio id="backing" preload="auto" style="display:none"></audio>
         <div class="note">Podkład gra w słuchawkach podczas nagrywania. <b>Nie zapisuje się</b> w pliku — nagrywa się tylko mikrofon.</div>
       </div>
@@ -127,10 +187,24 @@
   <div class="section step" id="step1" data-step="Krok 1">
     <h2>Nagrywanie</h2>
 
-    <div class="stack-sm" style="margin:6px 0 4px">
+    <div class="stack-sm" style="margin:6px 0 4px; align-items:center">
       <button id="btnStart" class="btn">Start</button>
       <button id="btnStop" class="btn secondary" disabled>Stop</button>
       <button id="btnDownload" class="btn secondary" disabled>Pobierz wokal</button>
+
+      <!-- VU + PRZESTER -->
+      <div class="vu-wrap" title="Poziom mikrofonu (live)">
+        <div class="vu-label">Mikrofon</div>
+        <div class="vu-bar"><div id="vuFill" class="vu-fill"></div></div>
+        <div id="vuNum" class="vu-num">-∞ dB</div>
+        <div id="clipLamp" class="clip-indicator" aria-label="Przester"></div>
+      </div>
+    </div>
+
+    <!-- Linia alertu i licznika przesterów -->
+    <div class="clip-line">
+      <div id="clipAlert" class="clip-alert">Wykryto przester: <b>odsuń się od mikrofonu lub go ścisz</b>.</div>
+      <div id="clipCounter" class="clip-counter">Przestery: 0</div>
     </div>
 
     <div class="row" style="margin-top:6px">
@@ -184,7 +258,7 @@ const PARENT_URL    = parentUrlRaw || '';
 
 /* ========= STAN ========= */
 let mediaRecorder, chunks = [], recordedBlob = null, startedAt = 0, durationMs = 0;
-let fileName = '', mimeType = 'audio/webm';
+let fileName = '', mimeType = 'audio/webm;codecs=opus';
 let metaToSend = null;
 
 const $ = id => document.getElementById(id);
@@ -196,9 +270,18 @@ const backingTime = $('backingTime');
 const playerTime  = $('playerTime');
 const banner = $('banner');
 
+const micSelect = $('micSelect');
+const btnRefreshMics = $('btnRefreshMics');
+
 let offsetMs = 0, tempoPct = 0, resyncTimer = null, rafId = null, isAuditioning = false;
 let isRecording = false;
 let maxTimer = null, warnTimer = null;
+
+/* ===== VU-meter + PRZESTER state ===== */
+let audioCtx = null, analyser = null, vuData = null, vuRAF = null;
+const vuFill = $('vuFill'), vuNum = $('vuNum');
+const clipLamp = $('clipLamp'), clipAlert = $('clipAlert'), clipCounter = $('clipCounter');
+let clipCount = 0, clipAlertTimer = null, lastClipTs = 0;
 
 /* ========= UTIL ========= */
 function log(m){ $('log').textContent += m + '\n'; }
@@ -211,6 +294,26 @@ function clamp(v,min,max){ return Math.min(max, Math.max(min, v)); }
 function setBanner(text){ banner.textContent = text || ''; }
 function stepActive(id){ try{ document.querySelectorAll('.step').forEach(s=>s.classList.remove('active')); if (id) $(id).classList.add('active'); }catch(_){} }
 
+/* --- JEDYNA ZMIANA FUNKCJONALNA: bezpieczne POST→JSON do Netlify --- */
+async function postJSON(url, payload){
+  const resp = await fetch(url, {
+    method:'POST',
+    headers:{ 'Content-Type':'application/json' },
+    body: JSON.stringify(payload),
+    // trywialny „retry” na wypadek chwilowego 502/edge
+    keepalive: false
+  });
+  const text = await resp.text();
+  try{
+    const data = JSON.parse(text);
+    return { ok:true, data };
+  }catch(_){
+    // pokaż pierwsze ~220 znaków odpowiedzi, żeby łatwo zdiagnozować HTML/komunikat błędu z funkcji
+    const preview = text ? text.slice(0, 220).replace(/\s+/g,' ').trim() : '(pusta odpowiedź)';
+    return { ok:false, error:`Odpowiedź nie-JSON z funkcji: ${preview}` };
+  }
+}
+
 /* ========= PREFILL ========= */
 let student = { imie:'', nazwisko:'', email:'', miejscowosc:'', tytul:'', trackUrl:'' };
 (function init(){
@@ -222,7 +325,35 @@ let student = { imie:'', nazwisko:'', email:'', miejscowosc:'', tytul:'', trackU
   if (student.trackUrl) { backing.src = student.trackUrl; backing.load(); log('Podkład ustawiony (z SPM).'); }
   setBanner('1) Nagraj → 2) Wyślij → 3) Wróć do SPM – Potwierdź wysyłkę i Zapisz');
   stepActive('step1');
+  initMics();
 })();
+
+/* ========= URZĄDZENIA ========= */
+async function initMics(){
+  try{ await navigator.mediaDevices.getUserMedia({ audio: true }); }catch(_){}
+  await listMics();
+}
+async function listMics(){
+  try{
+    const devs = await navigator.mediaDevices.enumerateDevices();
+    const mics = devs.filter(d => d.kind === 'audioinput');
+    micSelect.innerHTML = '';
+    mics.forEach((d, i) => {
+      const opt = document.createElement('option');
+      opt.value = d.deviceId;
+      opt.textContent = d.label || `Mikrofon ${i+1}`;
+      micSelect.appendChild(opt);
+    });
+    if (!mics.length){
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = 'Brak mikrofonów';
+      micSelect.appendChild(opt);
+    }
+    log(`Mikrofony: ${mics.map(d=>d.label||d.deviceId).join(' | ') || '(brak)'}`);
+  }catch(e){ log('enumerateDevices error: '+e.message); }
+}
+btnRefreshMics.onclick = listMics;
 
 /* ========= PROGRESS ========= */
 function refreshProgress(){
@@ -263,13 +394,137 @@ $('trackVol').addEventListener('input', e=>{
 backing.volume = parseFloat($('trackVol').value||'0.7');
 backing.preservesPitch = true; backing.mozPreservesPitch = true; backing.webkitPreservesPitch = true;
 
+/* ===== VU + PRZESTER ===== */
+function startVU(stream){
+  try{
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
+    const src = audioCtx.createMediaStreamSource(stream);
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 1024;
+    analyser.smoothingTimeConstant = 0.6;
+    src.connect(analyser);
+    vuData = (analyser.getFloatTimeDomainData ? new Float32Array(analyser.fftSize) : new Uint8Array(analyser.fftSize));
+
+    const loop = () => {
+      if (!analyser) return;
+
+      let clippedFrame = false, sum = 0;
+      if (vuData instanceof Float32Array){
+        analyser.getFloatTimeDomainData(vuData);
+        for (let i=0;i<vuData.length;i++){
+          const v = vuData[i];
+          sum += v*v;
+          if (v >= 1.0 || v <= -1.0) clippedFrame = true;
+        }
+      } else {
+        analyser.getByteTimeDomainData(vuData);
+        for (let i=0;i<vuData.length;i++){
+          const v = (vuData[i]-128)/128;
+          sum += v*v;
+          if (v >= 1.0 || v <= -1.0) clippedFrame = true;
+        }
+      }
+      const rms = Math.sqrt(sum / vuData.length);
+      const pct = Math.min(1, rms * 4.0);
+      vuFill.style.height = Math.max(0.05, pct) * 100 + '%';
+      const db = rms>0 ? (20*Math.log10(rms)).toFixed(1) : '-∞';
+      vuNum.textContent = (db==='-∞' ? '-∞' : db+' dB');
+
+      if (clippedFrame){
+        clipLamp.classList.add('active');
+        const now = performance.now();
+        if (now - lastClipTs > 120){
+          clipCount++;
+          clipCounter.textContent = 'Przestery: ' + clipCount;
+          lastClipTs = now;
+        }
+        showClipAlert();
+      } else {
+        clipLamp.classList.remove('active');
+      }
+
+      vuRAF = requestAnimationFrame(loop);
+    };
+    cancelAnimationFrame(vuRAF);
+    vuRAF = requestAnimationFrame(loop);
+  }catch(e){
+    log('VU error: '+e.message);
+  }
+}
+function stopVU(){
+  try{ cancelAnimationFrame(vuRAF); }catch(_){}
+  vuRAF = null;
+  analyser = null;
+  vuFill.style.height = '8%';
+  vuNum.textContent = '-∞ dB';
+  clipLamp.classList.remove('active');
+  hideClipAlert(true);
+  clipCount = 0; clipCounter.textContent = 'Przestery: 0';
+  lastClipTs = 0;
+}
+function showClipAlert(){
+  clipAlert.style.display = 'block';
+  try{ clearTimeout(clipAlertTimer); }catch(_){}
+  clipAlertTimer = setTimeout(()=> hideClipAlert(), 2000);
+}
+function hideClipAlert(force){
+  if (force){ clipAlert.style.display = 'none'; return; }
+  clipAlert.style.display = 'none';
+}
+
+/* ========= CONSTRAINTS ========= */
+function buildAudioConstraints(){
+  const deviceId = micSelect.value || undefined;
+  const base = {
+    echoCancellation: false,
+    noiseSuppression: false,
+    autoGainControl: false,
+    channelCount: 1,
+    sampleRate: 48000,
+    sampleSize: 16,
+    latency: 0
+  };
+  const c = deviceId ? { deviceId: { exact: deviceId }, ...base } : base;
+  return { audio: c };
+}
+function logSupportedConstraints(){
+  try{
+    const sc = navigator.mediaDevices.getSupportedConstraints?.() || {};
+    log('Supported constraints: ' + (Object.keys(sc).filter(k=>sc[k]).join(', ') || '(brak)'));
+  }catch(_){}
+}
+
 /* ========= NAGRYWANIE ========= */
+let liveStream = null;
+
 $('btnStart').onclick = async ()=>{
   try{
-    const micStream = await navigator.mediaDevices.getUserMedia({audio:true});
+    stopVU();
+    if (liveStream) { try { liveStream.getTracks().forEach(t=>t.stop()); } catch(_){} liveStream = null; }
+
+    const constraints = buildAudioConstraints();
+    logSupportedConstraints();
+    log('Proszę o mikrofon (surowy tor)…');
+    const micStream = await navigator.mediaDevices.getUserMedia(constraints);
+    liveStream = micStream;
+
+    try{
+      const track = micStream.getAudioTracks?.()[0];
+      if (track){
+        const s = track.getSettings?.() || {};
+        log('Ustawienia wejścia: ' + JSON.stringify({
+          deviceId: s.deviceId, channelCount: s.channelCount,
+          sampleRate: s.sampleRate, sampleSize: s.sampleSize,
+          echoCancellation: s.echoCancellation, noiseSuppression: s.noiseSuppression, autoGainControl: s.autoGainControl
+        }));
+      }
+    }catch(_){}
+
     chunks = []; recordedBlob = null; durationMs = 0; startedAt = Date.now();
 
-    mediaRecorder = new MediaRecorder(micStream, {mimeType});
+    const recOpts = { mimeType, audioBitsPerSecond: 128000 };
+    mediaRecorder = new MediaRecorder(micStream, recOpts);
+
     mediaRecorder.ondataavailable = e => { if(e.data && e.data.size) chunks.push(e.data); };
     mediaRecorder.onstop = ()=>{
       durationMs = Date.now() - startedAt;
@@ -284,10 +539,16 @@ $('btnStart').onclick = async ()=>{
       $('btnAudition').disabled = false;
       $('btnStopAud').disabled  = true;
 
+      const kbps = durationMs>0 ? Math.round((recordedBlob.size * 8) / (durationMs/1000) / 1000) : 0;
+      log(`Nagranie gotowe. Czas ~ ${durationMs} ms; rozmiar ~ ${Math.round(recordedBlob.size/1024)} KB; bitrate ~ ${kbps} kbps`);
+      if (kbps < 48) log('Uwaga: niski bitrate – możliwe artefakty mowy. Rozważ wyższy audioBitsPerSecond lub inną przeglądarkę.');
+
       setBanner('Gotowe nagranie. Możesz odsłuchać, pobrać wokal albo „Wyślij”.');
       stepActive('step2');
-      log(`Nagranie gotowe. Czas ~ ${durationMs} ms; rozmiar ~ ${Math.round(recordedBlob.size/1024)} KB`);
+      stopVU();
     };
+
+    startVU(micStream);
 
     backing.addEventListener('ended', onBackingEndedDuringRec);
     isRecording = true;
@@ -301,7 +562,8 @@ $('btnStart').onclick = async ()=>{
     $('btnStop').disabled = false;
     setBanner('Nagrywanie… Po zakończeniu podkładu nagranie zatrzyma się automatycznie.');
   }catch(e){
-    alert('Brak dostępu do mikrofonu.'); log('BŁĄD mikrofon: '+e.message);
+    alert('Brak lub zablokowany dostęp do mikrofonu.'); log('BŁĄD mikrofon: '+e.message);
+    stopVU();
   }
 };
 
@@ -320,6 +582,7 @@ function stopRecording(reason='manual'){
   try { backing.pause(); } catch(_){}
   $('btnStart').disabled = false;
   $('btnStop').disabled = true;
+  stopVU();
 
   if (reason === 'auto-end') {
     setBanner('Nagranie zakończone automatycznie z końcem podkładu. Możesz „Wyślij” albo „Pobierz wokal”.');
@@ -426,13 +689,12 @@ $('btnSendAll').onclick = async ()=>{
     const base64 = await blobToBase64(recordedBlob);
 
     log('Wysyłanie na Drive…');
-    const up = await fetch(FN_URL, {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ action:'upload', fileBase64: base64, mimeType, fileName })
-    }).then(r=>r.json());
-    if(!up.ok) throw new Error(up.error || 'Upload failed');
-
+    const upRes = await postJSON(FN_URL, { action:'upload', fileBase64: base64, mimeType, fileName });
+    if(!upRes.ok || !upRes.data || !upRes.data.ok){
+      const msg = (upRes.ok ? (upRes.data?.error || 'Upload failed') : upRes.error);
+      throw new Error(msg);
+    }
+    const up = upRes.data;
     $('fileIdSpan').textContent = up.fileId; $('fileIdLine').hidden = true;
     log(`Upload OK, fileId: ${up.fileId}`);
 
@@ -447,12 +709,12 @@ $('btnSendAll').onclick = async ()=>{
     };
 
     log('Zapis do Sheets…');
-    const m = await fetch(FN_URL, {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ action:'meta', meta: metaToSend })
-    }).then(r=>r.json());
-    if(!m.ok) throw new Error(m.error || 'Sheets error');
+    const metaRes = await postJSON(FN_URL, { action:'meta', meta: metaToSend });
+    if(!metaRes.ok || !metaRes.data || !metaRes.data.ok){
+      const msg = (metaRes.ok ? (metaRes.data?.error || 'Sheets error') : metaRes.error);
+      throw new Error(msg);
+    }
+    const m = metaRes.data;
     log('Sheets: OK (wiersz '+m.row+')');
 
     if (PARENT_URL) {
