@@ -1,23 +1,30 @@
 // Netlify Function: spm
-// Obsługuje dwa endpointy z frontu:
-//  - { action: "upload", fileBase64, mimeType, fileName }  -> upload na Google Drive
-//  - { action: "meta",   meta }                             -> dopis metadanych do Google Sheets (opcjonalnie)
+// Endpoints (POST JSON):
+//  - { action: "upload", fileBase64, mimeType, fileName }  -> upload na Google Drive (Shared Drive)
+//  - { action: "meta",   meta }                             -> dopis w Google Sheets (opcjonalnie)
 
 const { google } = require('googleapis');
+const { Readable } = require('stream');
 
-const SERVICE_JSON = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;   // CAŁY JSON klucza konta serwisowego
-const DRIVE_FOLDER_ID = process.env.DRIVE_FOLDER_ID;            // ID folderu na Drive
-const SHEETS_ID = process.env.SHEETS_ID || '';                  // (opcjonalnie) ID Arkusza
-const SHEET_NAME = process.env.SHEET_NAME || 'Wysylki';         // (opcjonalnie) nazwa arkusza
+// === Env ===
+const SERVICE_JSON     = process.env.GOOGLE_SERVICE_ACCOUNT_JSON; // pełny JSON klucza SA
+const DRIVE_FOLDER_ID  = process.env.DRIVE_FOLDER_ID;             // ID folderu (Shared Drive)
+const SHEETS_ID        = process.env.SHEETS_ID || '';             // (opcjonalnie) Arkusz
+const SHEET_NAME       = process.env.SHEET_NAME || 'Wysylki';     // (opcjonalnie) nazwa arkusza
+const MAKE_PUBLIC      = (process.env.MAKE_PUBLIC ?? '1') !== '0';// domyślnie: publikuj (anyone:reader)
 
-// ====== AUTH ======
+// === Auth ===
 function getAuth() {
   if (!SERVICE_JSON) throw new Error('Missing GOOGLE_SERVICE_ACCOUNT_JSON env');
   const creds = JSON.parse(SERVICE_JSON);
+
+  // Używamy pełnego zakresu Drive (bezpieczniej dla Shared Drive i uprawnień),
+  // plus Sheets (opcjonalnie).
   const scopes = [
-    'https://www.googleapis.com/auth/drive.file',
+    'https://www.googleapis.com/auth/drive',
     'https://www.googleapis.com/auth/spreadsheets'
   ];
+
   return new google.auth.JWT(
     creds.client_email,
     null,
@@ -26,21 +33,22 @@ function getAuth() {
   );
 }
 
-// ====== Utils ======
-function ok(res, data) {
-  res.statusCode = 200;
-  res.setHeader('Content-Type', 'application/json');
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.end(JSON.stringify({ ok: true, ...data }));
+// === Helpers ===
+function jsonResponse(statusCode, data) {
+  return {
+    statusCode,
+    headers: {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*'
+    },
+    body: JSON.stringify(data)
+  };
 }
-function err(res, message, status = 200) {
-  res.statusCode = status;
-  res.setHeader('Content-Type', 'application/json');
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.end(JSON.stringify({ ok: false, error: message }));
-}
+const ok  = (data = {}) => jsonResponse(200, { ok: true,  ...data });
+const err = (message)   => jsonResponse(200, { ok: false, error: message });
 
-exports.handler = async (event, context) => {
+// === Handler ===
+exports.handler = async (event) => {
   // CORS preflight
   if (event.httpMethod === 'OPTIONS') {
     return {
@@ -55,11 +63,7 @@ exports.handler = async (event, context) => {
   }
 
   if (event.httpMethod !== 'POST') {
-    return {
-      statusCode: 200,
-      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
-      body: JSON.stringify({ ok: false, error: 'Method not allowed' })
-    };
+    return err('Method not allowed');
   }
 
   try {
@@ -69,18 +73,17 @@ exports.handler = async (event, context) => {
     // ====== UPLOAD ======
     if (action === 'upload') {
       const { fileBase64, mimeType, fileName } = body;
-      if (!fileBase64 || !mimeType || !fileName) {
-        return err({ setHeader(){}, end(){} }, 'Missing upload fields');
-      }
-      if (!DRIVE_FOLDER_ID) throw new Error('Missing DRIVE_FOLDER_ID env');
+      if (!fileBase64 || !mimeType || !fileName) return err('Missing upload fields');
+      if (!DRIVE_FOLDER_ID) return err('Missing DRIVE_FOLDER_ID env');
 
-      const auth = getAuth();
+      const auth  = getAuth();
       const drive = google.drive({ version: 'v3', auth });
 
-      // Node Buffer z base64
+      // Buffer -> strumień
       const buffer = Buffer.from(fileBase64, 'base64');
+      const stream = Readable.from(buffer);
 
-      // Upload pojedynczego pliku
+      // KLUCZ: supportsAllDrives = true, parent = folder na Shared Drive
       const createRes = await drive.files.create({
         requestBody: {
           name: fileName,
@@ -88,29 +91,42 @@ exports.handler = async (event, context) => {
         },
         media: {
           mimeType,
-          body: require('stream').Readable.from(buffer)
+          body: stream
         },
-        fields: 'id, webViewLink, webContentLink'
+        supportsAllDrives: true,
+        fields: 'id, name, mimeType, webViewLink, webContentLink'
       });
 
-      const fileId = createRes.data.id;
-      const viewLink = createRes.data.webViewLink || `https://drive.google.com/file/d/${fileId}/view`;
+      const fileId       = createRes.data.id;
+      const webViewLink  = createRes.data.webViewLink  || `https://drive.google.com/file/d/${fileId}/view`;
       const downloadLink = createRes.data.webContentLink || `https://drive.google.com/uc?id=${fileId}&export=download`;
 
-      return ok({ setHeader(){}, end(){} }, { fileId, viewLink, downloadLink });
+      // (Opcjonalnie) ustaw „kto ma link → reader”
+      if (MAKE_PUBLIC) {
+        try {
+          await drive.permissions.create({
+            fileId,
+            supportsAllDrives: true,
+            requestBody: { type: 'anyone', role: 'reader' }
+          });
+        } catch (e) {
+          // Niektóre Shared Drive mają polityki ograniczające udostępnianie — ignorujmy 403/400.
+          // Logując na Netlify można to podejrzeć, ale nie blokujemy całego uploadu.
+          console.warn('permissions.create failed:', e.message || e);
+        }
+      }
+
+      return ok({ fileId, viewLink: webViewLink, downloadLink });
     }
 
-    // ====== META (opcjonalne – dopis do Sheets) ======
+    // ====== META (opcjonalne) ======
     if (action === 'meta') {
-      if (!SHEETS_ID) {
-        // jeśli nie skonfigurowano Arkusza – zwróć OK i nic nie rób
-        return ok({ setHeader(){}, end(){} }, { note: 'Sheets not configured' });
-      }
-      const meta = body.meta || {};
-      const auth = getAuth();
+      if (!SHEETS_ID) return ok({ note: 'Sheets not configured' });
+
+      const meta   = body.meta || {};
+      const auth   = getAuth();
       const sheets = google.sheets({ version: 'v4', auth });
 
-      // Zrób płaską tablicę wartości – możesz dostosować kolejność kolumn
       const row = [
         new Date().toISOString(),
         meta.imie || '',
@@ -134,21 +150,13 @@ exports.handler = async (event, context) => {
         requestBody: { values: [row] }
       });
 
-      return ok({ setHeader(){}, end(){} }, { rowAppended: true });
+      return ok({ rowAppended: true });
     }
 
-    // ====== nieznana akcja ======
-    return {
-      statusCode: 200,
-      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
-      body: JSON.stringify({ ok: false, error: 'Unknown action' })
-    };
+    // ====== Nieznana akcja ======
+    return err('Unknown action');
 
   } catch (e) {
-    return {
-      statusCode: 200,
-      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
-      body: JSON.stringify({ ok: false, error: e.message || String(e) })
-    };
+    return err(e.message || String(e));
   }
 };
